@@ -55,9 +55,26 @@ function requireBartenderAuth(req, res, next) {
 
 function requireOwnerAuth(req, res, next) {
   const cookies = auth.parseCookies(req);
-  if (cookies[auth.ADMIN_COOKIE] !== process.env.OWNER_PASSCODE) {
+  const token = cookies[auth.ADMIN_COOKIE];
+  const session = token && db.findOwnerSessionByToken(token);
+
+  if (!session || Date.now() - session.createdAt > auth.SESSION_TTL_MS) {
+    if (session) db.removeOwnerSession(token);
     return res.redirect('/admin/login');
   }
+
+  if (session.ownerId === 'master') {
+    req.owner = { id: 'master', name: 'Master passcode' };
+    return next();
+  }
+
+  const owner = db.getOwners().find((o) => o.id === session.ownerId);
+  if (!owner) {
+    db.removeOwnerSession(token);
+    return res.redirect('/admin/login');
+  }
+
+  req.owner = owner;
   next();
 }
 
@@ -276,7 +293,7 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
   }
 });
 
-// --- GET /admin/login — owner passcode gate for managing bartenders ---
+// --- GET /admin/login — each owner signs in with their own phone + passcode ---
 app.get('/admin/login', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -290,10 +307,59 @@ app.get('/admin/login', (req, res) => {
     <body>
       <div class="card">
         <h1>Owner sign in</h1>
-        <p class="subtitle">Manage which bartenders can submit specials.</p>
+        <p class="subtitle">Manage bartenders and owners.</p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
         <form method="POST" action="/admin/login">
-          <label for="passcode">Owner passcode</label>
+          <label for="phone">Phone number</label>
+          <input type="tel" id="phone" name="phone" required autofocus />
+
+          <label for="passcode">Passcode</label>
+          <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
+
+          <button type="submit">Sign in</button>
+        </form>
+        <p class="subtitle" style="margin-top: 18px;">
+          <a href="/admin/master-login">Sign in with the master passcode instead</a>
+        </p>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.post('/admin/login', (req, res) => {
+  const { phone, passcode } = req.body;
+  const owner = phone && db.findOwnerByPhone(phone.trim());
+
+  if (!owner || !passcode || !auth.verifyPasscode(passcode, owner.passcodeHash)) {
+    return res.redirect('/admin/login?error=' + encodeURIComponent('Phone number or passcode not recognized.'));
+  }
+
+  const token = auth.newToken();
+  db.addOwnerSession({ token, ownerId: owner.id, createdAt: Date.now() });
+  auth.setCookie(res, auth.ADMIN_COOKIE, token, auth.SESSION_TTL_MS);
+  res.redirect('/admin/bartenders');
+});
+
+// --- Master passcode — bootstraps the first owner account, and works as a
+// recovery path if every owner gets locked out. Not meant for everyday use. ---
+app.get('/admin/master-login', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Master sign in</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Master sign in</h1>
+        <p class="subtitle">For initial setup or if every owner is locked out.</p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        <form method="POST" action="/admin/master-login">
+          <label for="passcode">Master passcode</label>
           <input type="password" id="passcode" name="passcode" required autofocus />
 
           <button type="submit">Sign in</button>
@@ -304,17 +370,104 @@ app.get('/admin/login', (req, res) => {
   `);
 });
 
-app.post('/admin/login', (req, res) => {
+app.post('/admin/master-login', (req, res) => {
   if (!process.env.OWNER_PASSCODE || req.body.passcode !== process.env.OWNER_PASSCODE) {
-    return res.redirect('/admin/login?error=' + encodeURIComponent('Incorrect passcode.'));
+    return res.redirect('/admin/master-login?error=' + encodeURIComponent('Incorrect passcode.'));
   }
-  auth.setCookie(res, auth.ADMIN_COOKIE, process.env.OWNER_PASSCODE, auth.SESSION_TTL_MS);
-  res.redirect('/admin/bartenders');
+  const token = auth.newToken();
+  db.addOwnerSession({ token, ownerId: 'master', createdAt: Date.now() });
+  auth.setCookie(res, auth.ADMIN_COOKIE, token, auth.SESSION_TTL_MS);
+  res.redirect('/admin/owners');
 });
 
 app.get('/admin/logout', (req, res) => {
+  const cookies = auth.parseCookies(req);
+  const token = cookies[auth.ADMIN_COOKIE];
+  if (token) db.removeOwnerSession(token);
   auth.clearCookie(res, auth.ADMIN_COOKIE);
   res.redirect('/admin/login');
+});
+
+// --- GET /admin/owners — list + add owners (owner only) ---
+app.get('/admin/owners', requireOwnerAuth, (req, res) => {
+  const rows = db.getOwners()
+    .map(
+      (o) => `
+        <li class="bartender-row">
+          <div>
+            <strong>${o.name}</strong>
+            <div class="subtitle">${o.phone}</div>
+          </div>
+          <form method="POST" action="/admin/owners/${o.id}/delete">
+            <button type="submit" class="danger">Remove</button>
+          </form>
+        </li>`
+    )
+    .join('');
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Owners</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Owners</h1>
+        <p class="subtitle">
+          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/logout">Sign out</a>
+        </p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+
+        <ul class="bartender-list">${rows || '<li class="subtitle">No owners added yet.</li>'}</ul>
+
+        <h1 style="margin-top: 32px;">Add an owner</h1>
+        <form method="POST" action="/admin/owners">
+          <label for="name">Name</label>
+          <input type="text" id="name" name="name" required />
+
+          <label for="phone">Phone number</label>
+          <input type="tel" id="phone" name="phone" placeholder="+19105551234" required />
+
+          <label for="passcode">Passcode</label>
+          <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
+
+          <button type="submit">Add owner</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.post('/admin/owners', requireOwnerAuth, (req, res) => {
+  const { name, phone, passcode } = req.body;
+
+  if (!name || !name.trim() || !phone || !phone.trim() || !passcode) {
+    return res.redirect('/admin/owners?error=' + encodeURIComponent('Name, phone, and passcode are all required.'));
+  }
+
+  if (db.findOwnerByPhone(phone.trim())) {
+    return res.redirect('/admin/owners?error=' + encodeURIComponent('That phone number is already registered.'));
+  }
+
+  db.addOwner({
+    id: shortId(),
+    name: name.trim(),
+    phone: phone.trim(),
+    passcodeHash: auth.hashPasscode(passcode),
+    createdAt: Date.now(),
+  });
+
+  res.redirect('/admin/owners');
+});
+
+app.post('/admin/owners/:id/delete', requireOwnerAuth, (req, res) => {
+  db.removeOwner(req.params.id);
+  res.redirect('/admin/owners');
 });
 
 // --- GET /admin/bartenders — list + add bartenders (owner only) ---
@@ -346,7 +499,9 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
     <body>
       <div class="card">
         <h1>Bartenders</h1>
-        <p class="subtitle"><a href="/admin/logout">Sign out</a></p>
+        <p class="subtitle">
+          Signed in as ${req.owner.name} · <a href="/admin/owners">Owners</a> · <a href="/admin/logout">Sign out</a>
+        </p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
         <ul class="bartender-list">${rows || '<li class="subtitle">No bartenders added yet.</li>'}</ul>

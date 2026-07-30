@@ -9,12 +9,21 @@ const DB_PATH = path.join(__dirname, '..', 'data', 'db.json');
 
 function readDb() {
   if (!fs.existsSync(DB_PATH)) {
-    return { pendingRequests: [], activeSpecials: [], bartenders: [], sessions: [] };
+    return {
+      pendingRequests: [],
+      activeSpecials: [],
+      bartenders: [],
+      sessions: [],
+      owners: [],
+      ownerSessions: [],
+    };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
   const data = JSON.parse(raw);
   if (!data.bartenders) data.bartenders = [];
   if (!data.sessions) data.sessions = [];
+  if (!data.owners) data.owners = [];
+  if (!data.ownerSessions) data.ownerSessions = [];
   return data;
 }
 
@@ -103,6 +112,48 @@ function removeSession(token) {
   writeDb(data);
 }
 
+function addOwner(owner) {
+  const data = readDb();
+  data.owners.push(owner);
+  writeDb(data);
+  return owner;
+}
+
+function getOwners() {
+  return readDb().owners;
+}
+
+function findOwnerByPhone(phone) {
+  return readDb().owners.find((o) => o.phone === phone) || null;
+}
+
+function removeOwner(id) {
+  const data = readDb();
+  const idx = data.owners.findIndex((o) => o.id === id);
+  if (idx === -1) return null;
+  const [removed] = data.owners.splice(idx, 1);
+  data.ownerSessions = data.ownerSessions.filter((s) => s.ownerId !== id);
+  writeDb(data);
+  return removed;
+}
+
+function addOwnerSession(session) {
+  const data = readDb();
+  data.ownerSessions.push(session);
+  writeDb(data);
+  return session;
+}
+
+function findOwnerSessionByToken(token) {
+  return readDb().ownerSessions.find((s) => s.token === token) || null;
+}
+
+function removeOwnerSession(token) {
+  const data = readDb();
+  data.ownerSessions = data.ownerSessions.filter((s) => s.token !== token);
+  writeDb(data);
+}
+
 module.exports = {
   addPendingRequest,
   getPendingRequests,
@@ -117,4 +168,11 @@ module.exports = {
   addSession,
   findSessionByToken,
   removeSession,
+  addOwner,
+  getOwners,
+  findOwnerByPhone,
+  removeOwner,
+  addOwnerSession,
+  findOwnerSessionByToken,
+  removeOwnerSession,
 };
