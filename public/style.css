@@ -132,3 +132,31 @@ button:active {
 .item-results li:hover {
   background: var(--panel);
 }
+
+.bartender-list {
+  list-style: none;
+  margin: 20px 0;
+  padding: 0;
+}
+
+.bartender-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #33383d;
+}
+
+.bartender-row form {
+  margin: 0;
+}
+
+button.danger {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  background: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+}

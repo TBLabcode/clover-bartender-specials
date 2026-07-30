@@ -13,6 +13,7 @@ const clover = require('./src/clover');
 const sms = require('./src/sms');
 const db = require('./src/db');
 const scheduler = require('./src/scheduler');
+const auth = require('./src/auth');
 
 const app = express();
 app.use(express.urlencoded({ extended: false })); // form submissions + Twilio webhook
@@ -30,8 +31,93 @@ function dollarsToCents(dollarsStr) {
   return Math.round(parseFloat(dollarsStr) * 100);
 }
 
+// --- Auth middleware ---
+
+function requireBartenderAuth(req, res, next) {
+  const cookies = auth.parseCookies(req);
+  const token = cookies[auth.SESSION_COOKIE];
+  const session = token && db.findSessionByToken(token);
+
+  if (!session || Date.now() - session.createdAt > auth.SESSION_TTL_MS) {
+    if (session) db.removeSession(token);
+    return res.redirect('/login');
+  }
+
+  const bartender = db.getBartenders().find((b) => b.id === session.bartenderId);
+  if (!bartender) {
+    db.removeSession(token);
+    return res.redirect('/login');
+  }
+
+  req.bartender = bartender;
+  next();
+}
+
+function requireOwnerAuth(req, res, next) {
+  const cookies = auth.parseCookies(req);
+  if (cookies[auth.ADMIN_COOKIE] !== process.env.OWNER_PASSCODE) {
+    return res.redirect('/admin/login');
+  }
+  next();
+}
+
+// --- GET /login — bartender enters phone + passcode ---
+app.get('/login', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Sign in</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Sign in</h1>
+        <p class="subtitle">Enter your phone number and passcode to submit specials.</p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        <form method="POST" action="/login">
+          <label for="phone">Phone number</label>
+          <input type="tel" id="phone" name="phone" required autofocus />
+
+          <label for="passcode">Passcode</label>
+          <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
+
+          <button type="submit">Sign in</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /login — verify phone + passcode, start a session ---
+app.post('/login', (req, res) => {
+  const { phone, passcode } = req.body;
+  const bartender = phone && db.findBartenderByPhone(phone.trim());
+
+  if (!bartender || !passcode || !auth.verifyPasscode(passcode, bartender.passcodeHash)) {
+    return res.redirect('/login?error=' + encodeURIComponent('Phone number or passcode not recognized.'));
+  }
+
+  const token = auth.newToken();
+  db.addSession({ token, bartenderId: bartender.id, createdAt: Date.now() });
+  auth.setCookie(res, auth.SESSION_COOKIE, token, auth.SESSION_TTL_MS);
+  res.redirect('/specials/new');
+});
+
+// --- GET /logout ---
+app.get('/logout', (req, res) => {
+  const cookies = auth.parseCookies(req);
+  const token = cookies[auth.SESSION_COOKIE];
+  if (token) db.removeSession(token);
+  auth.clearCookie(res, auth.SESSION_COOKIE);
+  res.redirect('/login');
+});
+
 // --- GET /specials/new — the bartender-facing form ---
-app.get('/specials/new', async (req, res) => {
+app.get('/specials/new', requireBartenderAuth, async (req, res) => {
   try {
     const items = await clover.getItems();
     const itemsJson = JSON.stringify(
@@ -50,11 +136,10 @@ app.get('/specials/new', async (req, res) => {
       <body>
         <div class="card">
           <h1>Submit a special</h1>
-          <p class="subtitle">This goes out for approval before it changes anything.</p>
+          <p class="subtitle">
+            Signed in as ${req.bartender.name} · <a href="/logout">not you?</a>
+          </p>
           <form method="POST" action="/specials/new" id="specialForm">
-            <label for="bartenderName">Your name</label>
-            <input type="text" id="bartenderName" name="bartenderName" required />
-
             <label for="itemSearch">Item</label>
             <div class="item-picker">
               <input type="text" id="itemSearch" autocomplete="off" placeholder="Search items…" required />
@@ -129,11 +214,12 @@ app.get('/specials/new', async (req, res) => {
 });
 
 // --- POST /specials/new — bartender submits the form ---
-app.post('/specials/new', async (req, res) => {
-  const { bartenderName, itemId, specialPrice } = req.body;
+app.post('/specials/new', requireBartenderAuth, async (req, res) => {
+  const bartenderName = req.bartender.name;
+  const { itemId, specialPrice } = req.body;
 
-  if (!bartenderName || !bartenderName.trim() || !itemId) {
-    return res.status(400).send('Name and item are required.');
+  if (!itemId) {
+    return res.status(400).send('Item is required.');
   }
 
   const priceCents = dollarsToCents(specialPrice);
@@ -188,6 +274,127 @@ app.post('/specials/new', async (req, res) => {
   } catch (err) {
     res.status(500).send(`Something went wrong: ${err.message}`);
   }
+});
+
+// --- GET /admin/login — owner passcode gate for managing bartenders ---
+app.get('/admin/login', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Owner sign in</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Owner sign in</h1>
+        <p class="subtitle">Manage which bartenders can submit specials.</p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        <form method="POST" action="/admin/login">
+          <label for="passcode">Owner passcode</label>
+          <input type="password" id="passcode" name="passcode" required autofocus />
+
+          <button type="submit">Sign in</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.post('/admin/login', (req, res) => {
+  if (!process.env.OWNER_PASSCODE || req.body.passcode !== process.env.OWNER_PASSCODE) {
+    return res.redirect('/admin/login?error=' + encodeURIComponent('Incorrect passcode.'));
+  }
+  auth.setCookie(res, auth.ADMIN_COOKIE, process.env.OWNER_PASSCODE, auth.SESSION_TTL_MS);
+  res.redirect('/admin/bartenders');
+});
+
+app.get('/admin/logout', (req, res) => {
+  auth.clearCookie(res, auth.ADMIN_COOKIE);
+  res.redirect('/admin/login');
+});
+
+// --- GET /admin/bartenders — list + add bartenders (owner only) ---
+app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
+  const rows = db.getBartenders()
+    .map(
+      (b) => `
+        <li class="bartender-row">
+          <div>
+            <strong>${b.name}</strong>
+            <div class="subtitle">${b.phone}</div>
+          </div>
+          <form method="POST" action="/admin/bartenders/${b.id}/delete">
+            <button type="submit" class="danger">Remove</button>
+          </form>
+        </li>`
+    )
+    .join('');
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Bartenders</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Bartenders</h1>
+        <p class="subtitle"><a href="/admin/logout">Sign out</a></p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+
+        <ul class="bartender-list">${rows || '<li class="subtitle">No bartenders added yet.</li>'}</ul>
+
+        <h1 style="margin-top: 32px;">Add a bartender</h1>
+        <form method="POST" action="/admin/bartenders">
+          <label for="name">Name</label>
+          <input type="text" id="name" name="name" required />
+
+          <label for="phone">Phone number</label>
+          <input type="tel" id="phone" name="phone" placeholder="+19105551234" required />
+
+          <label for="passcode">Passcode</label>
+          <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
+
+          <button type="submit">Add bartender</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
+  const { name, phone, passcode } = req.body;
+
+  if (!name || !name.trim() || !phone || !phone.trim() || !passcode) {
+    return res.redirect('/admin/bartenders?error=' + encodeURIComponent('Name, phone, and passcode are all required.'));
+  }
+
+  if (db.findBartenderByPhone(phone.trim())) {
+    return res.redirect('/admin/bartenders?error=' + encodeURIComponent('That phone number is already registered.'));
+  }
+
+  db.addBartender({
+    id: shortId(),
+    name: name.trim(),
+    phone: phone.trim(),
+    passcodeHash: auth.hashPasscode(passcode),
+    createdAt: Date.now(),
+  });
+
+  res.redirect('/admin/bartenders');
+});
+
+app.post('/admin/bartenders/:id/delete', requireOwnerAuth, (req, res) => {
+  db.removeBartender(req.params.id);
+  res.redirect('/admin/bartenders');
 });
 
 // --- POST /sms/incoming — Twilio webhook for approval replies ---

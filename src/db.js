@@ -9,10 +9,13 @@ const DB_PATH = path.join(__dirname, '..', 'data', 'db.json');
 
 function readDb() {
   if (!fs.existsSync(DB_PATH)) {
-    return { pendingRequests: [], activeSpecials: [] };
+    return { pendingRequests: [], activeSpecials: [], bartenders: [], sessions: [] };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
-  return JSON.parse(raw);
+  const data = JSON.parse(raw);
+  if (!data.bartenders) data.bartenders = [];
+  if (!data.sessions) data.sessions = [];
+  return data;
 }
 
 function writeDb(data) {
@@ -57,6 +60,49 @@ function clearActiveSpecials() {
   writeDb(data);
 }
 
+function addBartender(bartender) {
+  const data = readDb();
+  data.bartenders.push(bartender);
+  writeDb(data);
+  return bartender;
+}
+
+function getBartenders() {
+  return readDb().bartenders;
+}
+
+function findBartenderByPhone(phone) {
+  return readDb().bartenders.find((b) => b.phone === phone) || null;
+}
+
+function removeBartender(id) {
+  const data = readDb();
+  const idx = data.bartenders.findIndex((b) => b.id === id);
+  if (idx === -1) return null;
+  const [removed] = data.bartenders.splice(idx, 1);
+  // Any sessions belonging to this bartender are no longer valid.
+  data.sessions = data.sessions.filter((s) => s.bartenderId !== id);
+  writeDb(data);
+  return removed;
+}
+
+function addSession(session) {
+  const data = readDb();
+  data.sessions.push(session);
+  writeDb(data);
+  return session;
+}
+
+function findSessionByToken(token) {
+  return readDb().sessions.find((s) => s.token === token) || null;
+}
+
+function removeSession(token) {
+  const data = readDb();
+  data.sessions = data.sessions.filter((s) => s.token !== token);
+  writeDb(data);
+}
+
 module.exports = {
   addPendingRequest,
   getPendingRequests,
@@ -64,4 +110,11 @@ module.exports = {
   addActiveSpecial,
   getActiveSpecials,
   clearActiveSpecials,
+  addBartender,
+  getBartenders,
+  findBartenderByPhone,
+  removeBartender,
+  addSession,
+  findSessionByToken,
+  removeSession,
 };
