@@ -160,3 +160,22 @@ button.danger {
   border: 1px solid var(--error);
   color: var(--error);
 }
+
+.item-row {
+  padding: 14px 0;
+  border-bottom: 1px solid #33383d;
+}
+
+.item-row:first-child {
+  padding-top: 0;
+}
+
+.item-row .remove-row-btn {
+  margin-top: 14px;
+}
+
+.secondary-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}

@@ -157,15 +157,8 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
             Signed in as ${req.bartender.name} · <a href="/logout">not you?</a>
           </p>
           <form method="POST" action="/specials/new" id="specialForm">
-            <label for="itemSearch">Item</label>
-            <div class="item-picker">
-              <input type="text" id="itemSearch" autocomplete="off" placeholder="Search items…" required />
-              <input type="hidden" id="itemId" name="itemId" />
-              <ul id="itemResults" class="item-results"></ul>
-            </div>
-
-            <label for="specialPrice">Special price ($)</label>
-            <input type="number" id="specialPrice" name="specialPrice" step="0.01" min="0" required />
+            <div id="itemRows"></div>
+            <button type="button" id="addRowBtn" class="secondary-btn">+ Add another item</button>
 
             <button type="submit">Send for approval</button>
           </form>
@@ -173,47 +166,105 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
 
         <script>
           const items = ${itemsJson};
-          const searchInput = document.getElementById('itemSearch');
-          const hiddenInput = document.getElementById('itemId');
-          const resultsList = document.getElementById('itemResults');
+          const MAX_ROWS = 5;
+          const rowsContainer = document.getElementById('itemRows');
+          const addRowBtn = document.getElementById('addRowBtn');
+          let rowCount = 0;
 
           function formatMoney(cents) {
             return '$' + (cents / 100).toFixed(2);
           }
 
-          function renderResults(filter) {
-            const q = filter.trim().toLowerCase();
-            const matches = (q ? items.filter((i) => i.name.toLowerCase().includes(q)) : items).slice(0, 25);
-            resultsList.innerHTML = matches
-              .map((i) => \`<li data-id="\${i.id}">\${i.name} (currently \${formatMoney(i.price)})</li>\`)
-              .join('');
-            resultsList.style.display = matches.length ? 'block' : 'none';
+          function addRow() {
+            if (rowCount >= MAX_ROWS) return;
+            rowCount++;
+
+            const row = document.createElement('div');
+            row.className = 'item-row';
+            row.innerHTML = \`
+              <label>Item</label>
+              <div class="item-picker">
+                <input type="text" class="item-search" autocomplete="off" placeholder="Search items…" />
+                <input type="hidden" class="item-id-input" name="itemId" />
+                <ul class="item-results"></ul>
+              </div>
+              <label>Special price ($)</label>
+              <input type="number" class="special-price-input" name="specialPrice" step="0.01" min="0" />
+              <button type="button" class="remove-row-btn danger">Remove item</button>
+            \`;
+            rowsContainer.appendChild(row);
+
+            const searchInput = row.querySelector('.item-search');
+            const hiddenInput = row.querySelector('.item-id-input');
+            const resultsList = row.querySelector('.item-results');
+            const removeBtn = row.querySelector('.remove-row-btn');
+
+            function renderResults(filter) {
+              const q = filter.trim().toLowerCase();
+              const matches = (q ? items.filter((i) => i.name.toLowerCase().includes(q)) : items).slice(0, 25);
+              resultsList.innerHTML = matches
+                .map((i) => \`<li data-id="\${i.id}">\${i.name} (currently \${formatMoney(i.price)})</li>\`)
+                .join('');
+              resultsList.style.display = matches.length ? 'block' : 'none';
+            }
+
+            searchInput.addEventListener('input', () => {
+              hiddenInput.value = '';
+              renderResults(searchInput.value);
+            });
+            searchInput.addEventListener('focus', () => renderResults(searchInput.value));
+
+            resultsList.addEventListener('click', (e) => {
+              const li = e.target.closest('li[data-id]');
+              if (!li) return;
+              const item = items.find((i) => i.id === li.dataset.id);
+              if (!item) return;
+              hiddenInput.value = item.id;
+              searchInput.value = item.name;
+              resultsList.style.display = 'none';
+            });
+
+            removeBtn.addEventListener('click', () => {
+              row.remove();
+              rowCount--;
+              updateRowControls();
+            });
+
+            updateRowControls();
           }
 
-          searchInput.addEventListener('input', () => {
-            hiddenInput.value = '';
-            renderResults(searchInput.value);
-          });
-          searchInput.addEventListener('focus', () => renderResults(searchInput.value));
-
-          resultsList.addEventListener('click', (e) => {
-            const li = e.target.closest('li[data-id]');
-            if (!li) return;
-            const item = items.find((i) => i.id === li.dataset.id);
-            if (!item) return;
-            hiddenInput.value = item.id;
-            searchInput.value = item.name;
-            resultsList.style.display = 'none';
-          });
+          function updateRowControls() {
+            addRowBtn.style.display = rowCount >= MAX_ROWS ? 'none' : 'block';
+            document.querySelectorAll('.remove-row-btn').forEach((btn) => {
+              btn.style.display = rowCount > 1 ? 'block' : 'none';
+            });
+          }
 
           document.addEventListener('click', (e) => {
-            if (!e.target.closest('.item-picker')) resultsList.style.display = 'none';
+            if (!e.target.closest('.item-picker')) {
+              document.querySelectorAll('.item-results').forEach((el) => (el.style.display = 'none'));
+            }
           });
 
+          addRowBtn.addEventListener('click', addRow);
+          addRow();
+
           document.getElementById('specialForm').addEventListener('submit', (e) => {
-            if (!hiddenInput.value) {
+            const rows = Array.from(document.querySelectorAll('.item-row'));
+            const filled = rows.filter(
+              (r) => r.querySelector('.item-id-input').value && r.querySelector('.special-price-input').value
+            );
+
+            if (filled.length !== rows.length) {
               e.preventDefault();
-              alert('Please choose an item from the search results.');
+              alert('Finish or remove any item row that\\'s missing an item or a price.');
+              return;
+            }
+
+            const ids = filled.map((r) => r.querySelector('.item-id-input').value);
+            if (new Set(ids).size !== ids.length) {
+              e.preventDefault();
+              alert('The same item is selected more than once — remove the duplicate.');
             }
           });
         </script>
@@ -230,45 +281,62 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
   }
 });
 
-// --- POST /specials/new — bartender submits the form ---
+// --- POST /specials/new — bartender submits the form (up to 5 items, one approval code) ---
 app.post('/specials/new', requireBartenderAuth, async (req, res) => {
   const bartenderName = req.bartender.name;
-  const { itemId, specialPrice } = req.body;
+  const itemIds = [].concat(req.body.itemId || []).filter(Boolean);
+  const specialPrices = [].concat(req.body.specialPrice || []);
 
-  if (!itemId) {
-    return res.status(400).send('Item is required.');
+  if (itemIds.length === 0) {
+    return res.status(400).send('At least one item is required.');
+  }
+  if (itemIds.length > 5) {
+    return res.status(400).send('You can submit at most 5 items at once.');
+  }
+  if (new Set(itemIds).size !== itemIds.length) {
+    return res.status(400).send('The same item was selected more than once.');
   }
 
-  const priceCents = dollarsToCents(specialPrice);
-  if (!Number.isFinite(priceCents) || priceCents <= 0) {
-    return res.status(400).send('Special price must be a positive number.');
+  const priceCentsList = specialPrices.map(dollarsToCents);
+  if (priceCentsList.some((c) => !Number.isFinite(c) || c <= 0)) {
+    return res.status(400).send('Special price must be a positive number for every item.');
   }
 
-  const alreadyPending = db.getPendingRequests().find((r) => r.itemId === itemId);
-  if (alreadyPending) {
+  const pendingItemIds = new Set(
+    db.getPendingRequests().flatMap((r) => r.items.map((i) => i.itemId))
+  );
+  const conflict = itemIds.find((id) => pendingItemIds.has(id));
+  if (conflict) {
     return res.status(409).send(
-      `This item already has a special pending approval (submitted by ${alreadyPending.bartenderName}). ` +
-      `Wait for it to be approved or ask an approver to ignore it before submitting another.`
+      'One of these items already has a special pending approval. ' +
+      'Wait for it to be approved or ask an approver to ignore it before submitting another.'
     );
   }
 
   try {
-    const item = await clover.getItem(itemId);
+    const cloverItems = await Promise.all(itemIds.map((id) => clover.getItem(id)));
+    const items = cloverItems.map((item, i) => ({
+      itemId: item.id,
+      itemName: item.name,
+      originalPrice: item.price,
+      specialPriceCents: priceCentsList[i],
+    }));
+
     const request = {
       id: shortId(),
       bartenderName,
-      itemId,
-      itemName: item.name,
-      originalPrice: item.price,
-      specialPriceCents: priceCents,
+      items,
       createdAt: Date.now(),
     };
     db.addPendingRequest(request);
 
+    const itemLines = items
+      .map((i) => `- ${i.itemName} at ${formatMoney(i.specialPriceCents)} (normally ${formatMoney(i.originalPrice)})`)
+      .join('\n');
+
     await sms.notifyApprovers(
-      `${bartenderName} wants to special "${item.name}" at ${formatMoney(request.specialPriceCents)} ` +
-      `(normally ${formatMoney(item.price)}).\n` +
-      `Reply YES ${request.id} to approve.`
+      `${bartenderName} wants to special:\n${itemLines}\n` +
+      `Reply YES ${request.id} to approve all.`
     );
 
     res.send(`
@@ -582,20 +650,31 @@ app.post('/sms/incoming', async (req, res) => {
     return res.send('<Response><Message>No matching pending special found. Include the code, e.g. YES a1b2c3.</Message></Response>');
   }
 
-  try {
-    await clover.updateItemPrice(request.itemId, request.specialPriceCents);
-    db.removePendingRequest(request.id);
-    db.addActiveSpecial(request);
+  db.removePendingRequest(request.id);
 
-    await sms.notifyApprovers(
-      `${request.itemName} is now ${formatMoney(request.specialPriceCents)}. ` +
-      `Approved by ${from}. Reverts automatically at 3am.`
-    );
-
-    res.send('<Response></Response>');
-  } catch (err) {
-    res.send(`<Response><Message>Failed to update Clover: ${err.message}</Message></Response>`);
+  const results = [];
+  for (const item of request.items) {
+    try {
+      await clover.updateItemPrice(item.itemId, item.specialPriceCents);
+      db.addActiveSpecial({
+        itemId: item.itemId,
+        itemName: item.itemName,
+        originalPrice: item.originalPrice,
+        specialPriceCents: item.specialPriceCents,
+        bartenderName: request.bartenderName,
+        createdAt: Date.now(),
+      });
+      results.push(`${item.itemName} is now ${formatMoney(item.specialPriceCents)}`);
+    } catch (err) {
+      results.push(`FAILED to update ${item.itemName}: ${err.message}`);
+    }
   }
+
+  await sms.notifyApprovers(
+    `${results.join('\n')}\nApproved by ${from}. Reverts automatically at 3am.`
+  );
+
+  res.send('<Response></Response>');
 });
 
 const PORT = process.env.PORT || 3000;
