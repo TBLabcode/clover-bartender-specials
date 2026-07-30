@@ -100,3 +100,35 @@ button:active {
   margin-bottom: 16px;
   font-size: 0.9rem;
 }
+
+.item-picker {
+  position: relative;
+}
+
+.item-results {
+  display: none;
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: #14171a;
+  border: 1px solid #33383d;
+  border-radius: 10px;
+}
+
+.item-results li {
+  padding: 12px 10px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.item-results li:active,
+.item-results li:hover {
+  background: var(--panel);
+}

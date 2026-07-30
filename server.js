@@ -34,9 +34,9 @@ function dollarsToCents(dollarsStr) {
 app.get('/specials/new', async (req, res) => {
   try {
     const items = await clover.getItems();
-    const options = items
-      .map((i) => `<option value="${i.id}">${i.name} (currently ${formatMoney(i.price)})</option>`)
-      .join('');
+    const itemsJson = JSON.stringify(
+      items.map((i) => ({ id: i.id, name: i.name, price: i.price }))
+    ).replace(/</g, '\\u003c');
 
     res.send(`
       <!DOCTYPE html>
@@ -51,15 +51,16 @@ app.get('/specials/new', async (req, res) => {
         <div class="card">
           <h1>Submit a special</h1>
           <p class="subtitle">This goes out for approval before it changes anything.</p>
-          <form method="POST" action="/specials/new">
+          <form method="POST" action="/specials/new" id="specialForm">
             <label for="bartenderName">Your name</label>
             <input type="text" id="bartenderName" name="bartenderName" required />
 
-            <label for="itemId">Item</label>
-            <select id="itemId" name="itemId" required>
-              <option value="" disabled selected>Choose an item</option>
-              ${options}
-            </select>
+            <label for="itemSearch">Item</label>
+            <div class="item-picker">
+              <input type="text" id="itemSearch" autocomplete="off" placeholder="Search items…" required />
+              <input type="hidden" id="itemId" name="itemId" />
+              <ul id="itemResults" class="item-results"></ul>
+            </div>
 
             <label for="specialPrice">Special price ($)</label>
             <input type="number" id="specialPrice" name="specialPrice" step="0.01" min="0" required />
@@ -67,6 +68,53 @@ app.get('/specials/new', async (req, res) => {
             <button type="submit">Send for approval</button>
           </form>
         </div>
+
+        <script>
+          const items = ${itemsJson};
+          const searchInput = document.getElementById('itemSearch');
+          const hiddenInput = document.getElementById('itemId');
+          const resultsList = document.getElementById('itemResults');
+
+          function formatMoney(cents) {
+            return '$' + (cents / 100).toFixed(2);
+          }
+
+          function renderResults(filter) {
+            const q = filter.trim().toLowerCase();
+            const matches = (q ? items.filter((i) => i.name.toLowerCase().includes(q)) : items).slice(0, 25);
+            resultsList.innerHTML = matches
+              .map((i) => \`<li data-id="\${i.id}">\${i.name} (currently \${formatMoney(i.price)})</li>\`)
+              .join('');
+            resultsList.style.display = matches.length ? 'block' : 'none';
+          }
+
+          searchInput.addEventListener('input', () => {
+            hiddenInput.value = '';
+            renderResults(searchInput.value);
+          });
+          searchInput.addEventListener('focus', () => renderResults(searchInput.value));
+
+          resultsList.addEventListener('click', (e) => {
+            const li = e.target.closest('li[data-id]');
+            if (!li) return;
+            const item = items.find((i) => i.id === li.dataset.id);
+            if (!item) return;
+            hiddenInput.value = item.id;
+            searchInput.value = item.name;
+            resultsList.style.display = 'none';
+          });
+
+          document.addEventListener('click', (e) => {
+            if (!e.target.closest('.item-picker')) resultsList.style.display = 'none';
+          });
+
+          document.getElementById('specialForm').addEventListener('submit', (e) => {
+            if (!hiddenInput.value) {
+              e.preventDefault();
+              alert('Please choose an item from the search results.');
+            }
+          });
+        </script>
       </body>
       </html>
     `);
