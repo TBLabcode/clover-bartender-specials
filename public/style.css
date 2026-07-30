@@ -51,7 +51,7 @@ label {
   margin-top: 18px;
 }
 
-select, input[type="text"], input[type="number"] {
+select, input[type="text"], input[type="number"], input[type="tel"], input[type="password"], textarea {
   width: 100%;
   padding: 14px;
   font-size: 1.05rem;
@@ -59,9 +59,20 @@ select, input[type="text"], input[type="number"] {
   border: 1px solid #33383d;
   background: #14171a;
   color: var(--text);
+  font-family: inherit;
 }
 
-select:focus, input:focus {
+textarea {
+  resize: vertical;
+}
+
+input[type="file"] {
+  width: 100%;
+  padding: 14px 0;
+  color: var(--text);
+}
+
+select:focus, input:focus, textarea:focus {
   outline: 2px solid var(--accent);
   border-color: var(--accent);
 }

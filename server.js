@@ -8,16 +8,37 @@ process.env.TZ = process.env.APP_TIMEZONE || 'America/New_York';
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 
 const clover = require('./src/clover');
 const sms = require('./src/sms');
 const db = require('./src/db');
 const scheduler = require('./src/scheduler');
 const auth = require('./src/auth');
+const social = require('./src/social');
 
 const app = express();
 app.use(express.urlencoded({ extended: false })); // form submissions + Twilio webhook
 app.use(express.static(path.join(__dirname, 'public')));
+
+// --- Photo uploads for social posts ---
+const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOADS_DIR,
+    filename: (req, file, cb) => {
+      const ext = file.mimetype === 'image/png' ? '.png' : '.jpg';
+      cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
+    },
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    cb(null, file.mimetype === 'image/jpeg' || file.mimetype === 'image/png');
+  },
+});
 
 function shortId() {
   return crypto.randomBytes(3).toString('hex'); // e.g. "a1b2c3"
@@ -154,7 +175,7 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
         <div class="card">
           <h1>Submit a special</h1>
           <p class="subtitle">
-            Signed in as ${req.bartender.name} · <a href="/logout">not you?</a>
+            Signed in as ${req.bartender.name} · <a href="/social/new">Post a photo</a> · <a href="/logout">not you?</a>
           </p>
           <form method="POST" action="/specials/new" id="specialForm">
             <div id="itemRows"></div>
@@ -357,6 +378,86 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
       </html>
     `);
   } catch (err) {
+    res.status(500).send(`Something went wrong: ${err.message}`);
+  }
+});
+
+// --- GET /social/new — bartender posts a photo to Facebook + Instagram ---
+app.get('/social/new', requireBartenderAuth, (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Post a Photo</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Post a photo</h1>
+        <p class="subtitle">
+          Signed in as ${req.bartender.name} · <a href="/specials/new">Back to specials</a>
+        </p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        <form method="POST" action="/social/new" enctype="multipart/form-data">
+          <label for="photo">Photo</label>
+          <input type="file" id="photo" name="photo" accept="image/jpeg,image/png" capture="environment" required />
+
+          <label for="caption">Caption</label>
+          <textarea id="caption" name="caption" rows="4" required></textarea>
+
+          <button type="submit">Post to Facebook &amp; Instagram</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /social/new — upload the photo, post it, then clean up the file ---
+app.post('/social/new', requireBartenderAuth, upload.single('photo'), async (req, res) => {
+  const caption = (req.body.caption || '').trim();
+
+  if (!req.file) {
+    return res.redirect('/social/new?error=' + encodeURIComponent('Please attach a JPEG or PNG photo.'));
+  }
+  if (!caption) {
+    fs.unlink(req.file.path, () => {});
+    return res.redirect('/social/new?error=' + encodeURIComponent('A caption is required.'));
+  }
+
+  const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+
+  try {
+    const result = await social.postPhoto(imageUrl, caption);
+    fs.unlink(req.file.path, () => {});
+
+    const lines = [
+      `Facebook: ${result.facebook.success ? 'posted' : `failed — ${result.facebook.error}`}`,
+      `Instagram: ${result.instagram.success ? 'posted' : `failed — ${result.instagram.error}`}`,
+    ];
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Posted</title>
+        <link rel="stylesheet" href="/style.css" />
+      </head>
+      <body>
+        <div class="card confirmation">
+          <div class="big">${result.facebook.success || result.instagram.success ? '✅' : '⚠️'}</div>
+          <p>${lines.join('<br>')}</p>
+          <p><a href="/specials/new">Back to specials</a></p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    fs.unlink(req.file.path, () => {});
     res.status(500).send(`Something went wrong: ${err.message}`);
   }
 });
