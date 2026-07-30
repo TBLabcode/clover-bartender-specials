@@ -28,6 +28,7 @@ function readDb() {
 }
 
 function writeDb(data) {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
