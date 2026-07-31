@@ -7,6 +7,13 @@ const path = require('path');
 
 const DB_PATH = path.join(__dirname, '..', 'data', 'db.json');
 
+// Strips formatting and a leading "1" country code so "+19105551234",
+// "9105551234", and "(910) 555-1234" all match the same person.
+function normalizePhone(phone) {
+  const digits = (phone || '').replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
 function readDb() {
   if (!fs.existsSync(DB_PATH)) {
     return {
@@ -82,7 +89,8 @@ function getBartenders() {
 }
 
 function findBartenderByPhone(phone) {
-  return readDb().bartenders.find((b) => b.phone === phone) || null;
+  const target = normalizePhone(phone);
+  return readDb().bartenders.find((b) => normalizePhone(b.phone) === target) || null;
 }
 
 function removeBartender(id) {
@@ -125,7 +133,8 @@ function getOwners() {
 }
 
 function findOwnerByPhone(phone) {
-  return readDb().owners.find((o) => o.phone === phone) || null;
+  const target = normalizePhone(phone);
+  return readDb().owners.find((o) => normalizePhone(o.phone) === target) || null;
 }
 
 function removeOwner(id) {
@@ -156,6 +165,7 @@ function removeOwnerSession(token) {
 }
 
 module.exports = {
+  normalizePhone,
   addPendingRequest,
   getPendingRequests,
   removePendingRequest,

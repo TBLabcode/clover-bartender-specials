@@ -117,7 +117,7 @@ app.get('/login', (req, res) => {
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
         <form method="POST" action="/login">
           <label for="phone">Phone number</label>
-          <input type="tel" id="phone" name="phone" required autofocus />
+          <input type="tel" id="phone" name="phone" placeholder="9105551234" required autofocus />
 
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
@@ -480,7 +480,7 @@ app.get('/admin/login', (req, res) => {
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
         <form method="POST" action="/admin/login">
           <label for="phone">Phone number</label>
-          <input type="tel" id="phone" name="phone" required autofocus />
+          <input type="tel" id="phone" name="phone" placeholder="9105551234" required autofocus />
 
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
@@ -599,7 +599,7 @@ app.get('/admin/owners', requireOwnerAuth, (req, res) => {
           <input type="text" id="name" name="name" required />
 
           <label for="phone">Phone number</label>
-          <input type="tel" id="phone" name="phone" placeholder="+19105551234" required />
+          <input type="tel" id="phone" name="phone" placeholder="9105551234" required />
 
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
@@ -619,14 +619,19 @@ app.post('/admin/owners', requireOwnerAuth, (req, res) => {
     return res.redirect('/admin/owners?error=' + encodeURIComponent('Name, phone, and passcode are all required.'));
   }
 
-  if (db.findOwnerByPhone(phone.trim())) {
+  const normalizedPhone = db.normalizePhone(phone);
+  if (normalizedPhone.length !== 10) {
+    return res.redirect('/admin/owners?error=' + encodeURIComponent('Enter a valid 10-digit phone number.'));
+  }
+
+  if (db.findOwnerByPhone(normalizedPhone)) {
     return res.redirect('/admin/owners?error=' + encodeURIComponent('That phone number is already registered.'));
   }
 
   db.addOwner({
     id: shortId(),
     name: name.trim(),
-    phone: phone.trim(),
+    phone: normalizedPhone,
     passcodeHash: auth.hashPasscode(passcode),
     createdAt: Date.now(),
   });
@@ -681,7 +686,7 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
           <input type="text" id="name" name="name" required />
 
           <label for="phone">Phone number</label>
-          <input type="tel" id="phone" name="phone" placeholder="+19105551234" required />
+          <input type="tel" id="phone" name="phone" placeholder="9105551234" required />
 
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
@@ -701,14 +706,19 @@ app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
     return res.redirect('/admin/bartenders?error=' + encodeURIComponent('Name, phone, and passcode are all required.'));
   }
 
-  if (db.findBartenderByPhone(phone.trim())) {
+  const normalizedPhone = db.normalizePhone(phone);
+  if (normalizedPhone.length !== 10) {
+    return res.redirect('/admin/bartenders?error=' + encodeURIComponent('Enter a valid 10-digit phone number.'));
+  }
+
+  if (db.findBartenderByPhone(normalizedPhone)) {
     return res.redirect('/admin/bartenders?error=' + encodeURIComponent('That phone number is already registered.'));
   }
 
   db.addBartender({
     id: shortId(),
     name: name.trim(),
-    phone: phone.trim(),
+    phone: normalizedPhone,
     passcodeHash: auth.hashPasscode(passcode),
     createdAt: Date.now(),
   });
