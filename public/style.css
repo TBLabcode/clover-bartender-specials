@@ -9,9 +9,14 @@
   --accent: #e8b64c;
   --accent-text: #14171a;
   --error: #e0574c;
+  --link: #ffd60a;
 }
 
 * { box-sizing: border-box; }
+
+a, a:visited {
+  color: var(--link);
+}
 
 body {
   margin: 0;
