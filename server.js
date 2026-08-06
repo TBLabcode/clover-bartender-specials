@@ -64,16 +64,27 @@ function findBestItemMatch(extractedName, items, extractedCode) {
   return best;
 }
 
-function renderInventoryRow(index, matchedItem, drinksValue, receiptNote) {
+function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatchedName, unmatchedCode) {
+  const startNew = !matchedItem && unmatchedName;
   return `
-    <div class="item-row">
+    <div class="item-row" data-mode="${startNew ? 'new' : 'existing'}">
       <label>Item</label>
-      <div class="item-picker">
+      <div class="item-picker existing-item-fields" style="${startNew ? 'display:none;' : ''}">
         <input type="text" class="item-search" autocomplete="off" placeholder="Search items…"
           value="${matchedItem ? matchedItem.name.replace(/"/g, '&quot;') : ''}" />
         <input type="hidden" class="item-id-input" name="itemId" value="${matchedItem ? matchedItem.id : ''}" />
         <ul class="item-results"></ul>
       </div>
+      <div class="new-item-fields" style="${startNew ? '' : 'display:none;'}">
+        <label>New item name</label>
+        <input type="text" class="new-item-name" name="newItemName" value="${(unmatchedName || '').replace(/"/g, '&quot;')}" />
+        <label>Price ($)</label>
+        <input type="number" class="new-item-price" name="newItemPrice" step="0.01" min="0" placeholder="e.g. 7.00" />
+        <input type="hidden" class="new-item-code" name="newItemCode" value="${(unmatchedCode || '').replace(/"/g, '&quot;')}" />
+      </div>
+      <p class="subtitle" style="margin: 6px 0 0;">
+        <a href="#" class="toggle-mode-btn">${startNew ? 'Search existing items instead' : "Can't find it? Add as a new item"}</a>
+      </p>
       <label>Drinks to add</label>
       <input type="number" class="drinks-input" name="drinksToAdd" step="1" min="1" value="${drinksValue}" />
       ${receiptNote ? `<p class="subtitle" style="margin: 6px 0 0;">${receiptNote}</p>` : ''}
@@ -581,7 +592,7 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
         const codeNote = line.code ? ` (code ${line.code})` : '';
         const receiptNote = `From receipt: "${line.name}"${codeNote} — ${line.count} × ${sizeLabel}`;
 
-        return renderInventoryRow(i, match, drinks, receiptNote);
+        return renderInventoryRow(i, match, drinks, receiptNote, match ? null : line.name, line.code);
       })
       .join('');
 
@@ -620,6 +631,9 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
             const hiddenInput = row.querySelector('.item-id-input');
             const resultsList = row.querySelector('.item-results');
             const removeBtn = row.querySelector('.remove-row-btn');
+            const toggleBtn = row.querySelector('.toggle-mode-btn');
+            const existingFields = row.querySelector('.existing-item-fields');
+            const newFields = row.querySelector('.new-item-fields');
 
             function renderResults(filter) {
               const q = filter.trim().toLowerCase();
@@ -644,6 +658,16 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
               resultsList.style.display = 'none';
             });
 
+            toggleBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              const goingNew = row.dataset.mode !== 'new';
+              row.dataset.mode = goingNew ? 'new' : 'existing';
+              existingFields.style.display = goingNew ? 'none' : 'block';
+              newFields.style.display = goingNew ? 'block' : 'none';
+              toggleBtn.textContent = goingNew ? 'Search existing items instead' : "Can't find it? Add as a new item";
+              if (goingNew) hiddenInput.value = '';
+            });
+
             removeBtn.addEventListener('click', () => {
               row.remove();
               rowCount--;
@@ -656,13 +680,24 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
             rowCount++;
             const row = document.createElement('div');
             row.className = 'item-row';
+            row.dataset.mode = 'existing';
             row.innerHTML = \`
               <label>Item</label>
-              <div class="item-picker">
+              <div class="item-picker existing-item-fields">
                 <input type="text" class="item-search" autocomplete="off" placeholder="Search items…" />
                 <input type="hidden" class="item-id-input" name="itemId" />
                 <ul class="item-results"></ul>
               </div>
+              <div class="new-item-fields" style="display:none;">
+                <label>New item name</label>
+                <input type="text" class="new-item-name" name="newItemName" />
+                <label>Price ($)</label>
+                <input type="number" class="new-item-price" name="newItemPrice" step="0.01" min="0" placeholder="e.g. 7.00" />
+                <input type="hidden" class="new-item-code" name="newItemCode" />
+              </div>
+              <p class="subtitle" style="margin: 6px 0 0;">
+                <a href="#" class="toggle-mode-btn">Can't find it? Add as a new item</a>
+              </p>
               <label>Drinks to add</label>
               <input type="number" class="drinks-input" name="drinksToAdd" step="1" min="1" />
               <button type="button" class="remove-row-btn danger">Remove item</button>
@@ -686,11 +721,18 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
             }
           });
 
+          function rowIsFilled(r) {
+            const drinks = r.querySelector('.drinks-input').value;
+            if (!drinks) return false;
+            if (r.dataset.mode === 'new') {
+              return r.querySelector('.new-item-name').value && r.querySelector('.new-item-price').value;
+            }
+            return !!r.querySelector('.item-id-input').value;
+          }
+
           document.getElementById('inventoryForm').addEventListener('submit', (e) => {
             const rows = Array.from(document.querySelectorAll('.item-row'));
-            const filled = rows.filter(
-              (r) => r.querySelector('.item-id-input').value && r.querySelector('.drinks-input').value
-            );
+            const filled = rows.filter(rowIsFilled);
             if (filled.length === 0) {
               e.preventDefault();
               alert('Add at least one item with a quantity.');
@@ -698,7 +740,7 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
             }
             if (filled.length !== rows.length) {
               e.preventDefault();
-              alert('Finish or remove any row that\\'s missing an item or a quantity.');
+              alert('Finish or remove any row that\\'s missing an item (or new item name + price) and a quantity.');
             }
           });
         </script>
@@ -718,22 +760,43 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
 
 // --- POST /inventory/confirm — write the reviewed quantities to Clover ---
 app.post('/inventory/confirm', requireOwnerAuth, async (req, res) => {
-  const itemIds = [].concat(req.body.itemId || []).filter(Boolean);
+  // Every row submits all five fields (empty string for whichever mode isn't
+  // active), so these stay positionally aligned row-for-row.
+  const itemIds = [].concat(req.body.itemId || []);
+  const newItemNames = [].concat(req.body.newItemName || []);
+  const newItemPrices = [].concat(req.body.newItemPrice || []);
+  const newItemCodes = [].concat(req.body.newItemCode || []);
   const drinksToAdd = [].concat(req.body.drinksToAdd || []).map((n) => parseInt(n, 10));
 
-  if (itemIds.length === 0) {
+  const rowCount = drinksToAdd.length;
+  if (rowCount === 0) {
     return res.status(400).send('At least one item is required.');
   }
   if (drinksToAdd.some((n) => !Number.isFinite(n) || n <= 0)) {
     return res.status(400).send('Quantity must be a positive whole number for every item.');
   }
+  for (let i = 0; i < rowCount; i++) {
+    if (!itemIds[i] && !(newItemNames[i] && newItemPrices[i])) {
+      return res.status(400).send('Every row needs either an existing item or a new item name + price.');
+    }
+  }
 
   try {
     const results = [];
-    for (let i = 0; i < itemIds.length; i++) {
-      const item = await clover.getItem(itemIds[i]);
-      const newQuantity = await clover.addToItemStock(itemIds[i], drinksToAdd[i]);
-      results.push(`${item.name}: +${drinksToAdd[i]} (now ${newQuantity})`);
+    for (let i = 0; i < rowCount; i++) {
+      let item;
+      if (itemIds[i]) {
+        item = await clover.getItem(itemIds[i]);
+      } else {
+        const priceCents = dollarsToCents(newItemPrices[i]);
+        if (!Number.isFinite(priceCents) || priceCents < 0) {
+          return res.status(400).send(`Invalid price for new item "${newItemNames[i]}".`);
+        }
+        item = await clover.createItem(newItemNames[i], priceCents, newItemCodes[i]);
+      }
+      const newQuantity = await clover.addToItemStock(item.id, drinksToAdd[i]);
+      const newTag = itemIds[i] ? '' : ' (new item)';
+      results.push(`${item.name}${newTag}: +${drinksToAdd[i]} (now ${newQuantity})`);
     }
 
     res.send(`

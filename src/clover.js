@@ -52,6 +52,20 @@ async function getItem(itemId) {
   return res.data;
 }
 
+// Creates a brand-new Clover item. priceCents must be a whole number of cents.
+async function createItem(name, priceCents, code) {
+  if (DRY_RUN) {
+    const id = `MOCKNEW${Date.now()}`;
+    console.log(`[DRY RUN] Would create new Clover item "${name}" at ${priceCents} cents (code: ${code || 'none'})`);
+    return { id, name, price: priceCents, code: code || '' };
+  }
+
+  const body = { name, price: priceCents };
+  if (code) body.code = code;
+  const res = await client.post(`/v3/merchants/${merchantId}/items`, body);
+  return res.data;
+}
+
 // Update an item's price. priceCents must be a whole number of cents.
 async function updateItemPrice(itemId, priceCents) {
   if (DRY_RUN) {
@@ -117,6 +131,7 @@ async function addToItemStock(itemId, quantityToAdd) {
 module.exports = {
   getItems,
   getItem,
+  createItem,
   updateItemPrice,
   getOrdersBetween,
   getItemStock,
