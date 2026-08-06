@@ -82,7 +82,7 @@ select:focus, input:focus, textarea:focus {
   border-color: var(--accent);
 }
 
-button {
+button, .menu-link {
   width: 100%;
   margin-top: 28px;
   padding: 16px;
@@ -91,6 +91,17 @@ button {
   border-radius: 10px;
   border: none;
   background: var(--accent);
+  color: var(--accent-text);
+}
+
+.menu-link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.menu-link:visited {
   color: var(--accent-text);
 }
 

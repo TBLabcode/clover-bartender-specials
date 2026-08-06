@@ -216,7 +216,32 @@ app.post('/login', (req, res) => {
   const token = auth.newToken();
   db.addSession({ token, bartenderId: bartender.id, createdAt: Date.now() });
   auth.setCookie(res, auth.SESSION_COOKIE, token, auth.SESSION_TTL_MS);
-  res.redirect('/specials/new');
+  res.redirect('/menu');
+});
+
+// --- GET /menu — bartender picks what to do ---
+app.get('/menu', requireBartenderAuth, (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Menu</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>What would you like to do?</h1>
+        <p class="subtitle">
+          Signed in as ${req.bartender.name} · <a href="/logout">not you?</a>
+        </p>
+        <a href="/specials/new" class="menu-link">Pick Specials</a>
+        <a href="/social/new" class="menu-link">Make a Social Post</a>
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 // --- GET /logout ---
@@ -249,7 +274,7 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
         <div class="card">
           <h1>Submit a special</h1>
           <p class="subtitle">
-            Signed in as ${req.bartender.name} · <a href="/social/new">Post a photo</a> · <a href="/logout">not you?</a>
+            Signed in as ${req.bartender.name} · <a href="/menu">Menu</a> · <a href="/logout">not you?</a>
           </p>
           <form method="POST" action="/specials/new" id="specialForm">
             <div id="itemRows"></div>
@@ -447,6 +472,7 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
         <div class="card confirmation">
           <div class="big">✅</div>
           <p>Sent for approval. It'll go live once approved.</p>
+          <p><a href="/menu">Back to menu</a></p>
         </div>
       </body>
       </html>
@@ -471,7 +497,7 @@ app.get('/social/new', requireBartenderAuth, (req, res) => {
       <div class="card">
         <h1>Post a photo</h1>
         <p class="subtitle">
-          Signed in as ${req.bartender.name} · <a href="/specials/new">Back to specials</a>
+          Signed in as ${req.bartender.name} · <a href="/menu">Menu</a>
         </p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
         <form method="POST" action="/social/new" enctype="multipart/form-data">
@@ -525,7 +551,7 @@ app.post('/social/new', requireBartenderAuth, upload.single('photo'), async (req
         <div class="card confirmation">
           <div class="big">${result.facebook.success || result.instagram.success ? '✅' : '⚠️'}</div>
           <p>${lines.join('<br>')}</p>
-          <p><a href="/specials/new">Back to specials</a></p>
+          <p><a href="/menu">Back to menu</a></p>
         </div>
       </body>
       </html>
