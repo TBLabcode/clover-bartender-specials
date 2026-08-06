@@ -8,9 +8,9 @@ const DRY_RUN = process.env.CLOVER_DRY_RUN === 'true';
 // Fake inventory used when CLOVER_DRY_RUN=true, so the form/approval/revert
 // flow can be tested end-to-end without valid Clover credentials.
 const MOCK_ITEMS = [
-  { id: 'MOCKITEM001', name: 'House Margarita', price: 1200 },
-  { id: 'MOCKITEM002', name: 'Draft IPA', price: 700 },
-  { id: 'MOCKITEM003', name: 'Old Fashioned', price: 1400 },
+  { id: 'MOCKITEM001', name: 'House Margarita', price: 1200, code: 'HM001' },
+  { id: 'MOCKITEM002', name: 'Draft IPA', price: 700, code: 'DIPA02' },
+  { id: 'MOCKITEM003', name: 'Old Fashioned', price: 1400, code: 'OF003' },
 ];
 
 const client = axios.create({
@@ -25,7 +25,7 @@ const client = axios.create({
 
 const merchantId = process.env.CLOVER_MERCHANT_ID;
 
-// Get all inventory items (id, name, current price in cents)
+// Get all inventory items (id, name, current price in cents, merchant SKU/code)
 async function getItems() {
   if (DRY_RUN) return MOCK_ITEMS;
 
@@ -36,6 +36,7 @@ async function getItems() {
     id: item.id,
     name: item.name,
     price: item.price,
+    code: item.code || '',
   }));
 }
 

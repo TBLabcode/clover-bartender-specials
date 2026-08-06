@@ -6,12 +6,13 @@ const axios = require('axios');
 const DRY_RUN = process.env.RECEIPT_DRY_RUN === 'true';
 
 const MOCK_LINES = [
-  { name: 'Grey Goose', sizeMl: 750, count: 6 },
-  { name: 'Coors Light', sizeMl: null, rawSize: '24-pack cans', count: 1 },
+  { name: 'Grey Goose', code: 'GG750', sizeMl: 750, count: 6 },
+  { name: 'Coors Light', code: '', sizeMl: null, rawSize: '24-pack cans', count: 1 },
 ];
 
-// Returns an array of { name, sizeMl, count, rawSize? } extracted from the photo.
+// Returns an array of { name, code, sizeMl, count, rawSize? } extracted from the photo.
 // sizeMl is 750, 1000, or null if the size can't be determined as one of those.
+// code is the distributor/product code printed on the receipt, if any (empty string if none).
 async function extractReceiptLines(imageBuffer, mimeType) {
   if (DRY_RUN) {
     console.log('[DRY RUN] Would send receipt photo to Claude for extraction');
@@ -36,11 +37,13 @@ async function extractReceiptLines(imageBuffer, mimeType) {
               text:
                 'This is a photo of a delivery or purchase receipt for a bar. Extract every line ' +
                 'item that represents alcohol or drink product received. For each line, identify: ' +
-                'the product name as printed, the bottle size in milliliters (750 for a standard ' +
-                '750ml bottle, 1000 for a 1 liter bottle, or null if the size is something else or ' +
-                'unclear), and the quantity of bottles/units received. Respond with ONLY a JSON ' +
-                'array, no other text, in this exact shape: ' +
-                '[{"name": "...", "sizeMl": 750, "count": 6}]. ' +
+                'the product name as printed, the distributor/product/SKU code printed on that line ' +
+                'if there is one (often a short alphanumeric code near the start or end of the line, ' +
+                'separate from the product name — empty string if none is printed), the bottle size ' +
+                'in milliliters (750 for a standard 750ml bottle, 1000 for a 1 liter bottle, or null ' +
+                'if the size is something else or unclear), and the quantity of bottles/units ' +
+                'received. Respond with ONLY a JSON array, no other text, in this exact shape: ' +
+                '[{"name": "...", "code": "...", "sizeMl": 750, "count": 6}]. ' +
                 'If sizeMl is null, include a "rawSize" field with whatever size text is printed, if any.',
             },
           ],

@@ -27,9 +27,16 @@ function normalizeItemName(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-// Best-effort match of a receipt line's product name against real Clover
-// items, so the review screen can pre-select the right one.
-function findBestItemMatch(extractedName, items) {
+// Best-effort match of a receipt line against real Clover items, so the
+// review screen can pre-select the right one. A matching product code is
+// exact and trusted over any name-based guess.
+function findBestItemMatch(extractedName, items, extractedCode) {
+  const code = (extractedCode || '').trim().toLowerCase();
+  if (code) {
+    const byCode = items.find((i) => (i.code || '').trim().toLowerCase() === code);
+    if (byCode) return byCode;
+  }
+
   const target = normalizeItemName(extractedName);
   if (!target) return null;
 
@@ -569,9 +576,10 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
           line.sizeMl === 750 ? line.count * DRINKS_PER_750ML
           : line.sizeMl === 1000 ? line.count * DRINKS_PER_1L
           : '';
-        const match = findBestItemMatch(line.name, items);
+        const match = findBestItemMatch(line.name, items, line.code);
         const sizeLabel = line.sizeMl ? `${line.sizeMl}ml` : (line.rawSize || 'unknown size');
-        const receiptNote = `From receipt: "${line.name}" — ${line.count} × ${sizeLabel}`;
+        const codeNote = line.code ? ` (code ${line.code})` : '';
+        const receiptNote = `From receipt: "${line.name}"${codeNote} — ${line.count} × ${sizeLabel}`;
 
         return renderInventoryRow(i, match, drinks, receiptNote);
       })
