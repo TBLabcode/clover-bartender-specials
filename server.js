@@ -458,7 +458,7 @@ app.get('/social/new', requireBartenderAuth, (req, res) => {
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
         <form method="POST" action="/social/new" enctype="multipart/form-data">
           <label for="photo">Photo</label>
-          <input type="file" id="photo" name="photo" accept="image/jpeg,image/png" capture="environment" required />
+          <input type="file" id="photo" name="photo" accept="image/jpeg,image/png" required />
 
           <label for="caption">Caption</label>
           <textarea id="caption" name="caption" rows="4" required></textarea>
@@ -538,7 +538,7 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
         <form method="POST" action="/inventory/new" enctype="multipart/form-data">
           <label for="receipt">Receipt photo</label>
-          <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" capture="environment" required />
+          <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" required />
 
           <button type="submit">Read receipt</button>
         </form>
