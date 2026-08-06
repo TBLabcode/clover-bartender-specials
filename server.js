@@ -549,18 +549,32 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
     </head>
     <body>
       <div class="card">
-        <h1>Add inventory from a receipt</h1>
-        <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a>
-        </p>
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
-        <form method="POST" action="/inventory/new" enctype="multipart/form-data">
-          <label for="receipt">Receipt photo</label>
-          <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" required />
+        <div id="uploadView">
+          <h1>Add inventory from a receipt</h1>
+          <p class="subtitle">
+            Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a>
+          </p>
+          ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+          <form method="POST" action="/inventory/new" enctype="multipart/form-data" id="receiptForm">
+            <label for="receipt">Receipt photo</label>
+            <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" required />
 
-          <button type="submit">Import Items</button>
-        </form>
+            <button type="submit">Import Items</button>
+          </form>
+        </div>
+        <div id="loadingView" class="loading-view">
+          <div class="spinner-beer">🍺</div>
+          <p class="subtitle">Reading your receipt…</p>
+        </div>
       </div>
+
+      <script>
+        document.getElementById('receiptForm').addEventListener('submit', () => {
+          if (!document.getElementById('receipt').files.length) return;
+          document.getElementById('uploadView').style.display = 'none';
+          document.getElementById('loadingView').style.display = 'block';
+        });
+      </script>
     </body>
     </html>
   `);
