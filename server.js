@@ -558,7 +558,7 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
           <label for="receipt">Receipt photo</label>
           <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" required />
 
-          <button type="submit">Read receipt</button>
+          <button type="submit">Import Items</button>
         </form>
       </div>
     </body>
