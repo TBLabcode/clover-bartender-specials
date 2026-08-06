@@ -17,6 +17,62 @@ const db = require('./src/db');
 const scheduler = require('./src/scheduler');
 const auth = require('./src/auth');
 const social = require('./src/social');
+const receipt = require('./src/receipt');
+
+// Standard 1.5oz pour: a 750ml bottle yields ~17 drinks, a 1L bottle ~22.
+const DRINKS_PER_750ML = 17;
+const DRINKS_PER_1L = 22;
+
+function normalizeItemName(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// Best-effort match of a receipt line's product name against real Clover
+// items, so the review screen can pre-select the right one.
+function findBestItemMatch(extractedName, items) {
+  const target = normalizeItemName(extractedName);
+  if (!target) return null;
+
+  const exact = items.find((i) => normalizeItemName(i.name) === target);
+  if (exact) return exact;
+
+  const contains = items.find((i) => {
+    const n = normalizeItemName(i.name);
+    return n.includes(target) || target.includes(n);
+  });
+  if (contains) return contains;
+
+  const targetWords = new Set(target.split(' '));
+  let best = null;
+  let bestScore = 0;
+  for (const item of items) {
+    const overlap = normalizeItemName(item.name)
+      .split(' ')
+      .filter((w) => targetWords.has(w)).length;
+    if (overlap > bestScore) {
+      bestScore = overlap;
+      best = item;
+    }
+  }
+  return best;
+}
+
+function renderInventoryRow(index, matchedItem, drinksValue, receiptNote) {
+  return `
+    <div class="item-row">
+      <label>Item</label>
+      <div class="item-picker">
+        <input type="text" class="item-search" autocomplete="off" placeholder="Search items…"
+          value="${matchedItem ? matchedItem.name.replace(/"/g, '&quot;') : ''}" />
+        <input type="hidden" class="item-id-input" name="itemId" value="${matchedItem ? matchedItem.id : ''}" />
+        <ul class="item-results"></ul>
+      </div>
+      <label>Drinks to add</label>
+      <input type="number" class="drinks-input" name="drinksToAdd" step="1" min="1" value="${drinksValue}" />
+      ${receiptNote ? `<p class="subtitle" style="margin: 6px 0 0;">${receiptNote}</p>` : ''}
+      <button type="button" class="remove-row-btn danger">Remove item</button>
+    </div>`;
+}
 
 const app = express();
 app.use(express.urlencoded({ extended: false })); // form submissions + Twilio webhook
@@ -462,6 +518,239 @@ app.post('/social/new', requireBartenderAuth, upload.single('photo'), async (req
   }
 });
 
+// --- GET /inventory/new — owner uploads a receipt photo ---
+app.get('/inventory/new', requireOwnerAuth, (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Add Inventory from Receipt</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Add inventory from a receipt</h1>
+        <p class="subtitle">
+          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a>
+        </p>
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        <form method="POST" action="/inventory/new" enctype="multipart/form-data">
+          <label for="receipt">Receipt photo</label>
+          <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" capture="environment" required />
+
+          <button type="submit">Read receipt</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /inventory/new — extract line items, show an editable review screen ---
+app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (req, res) => {
+  if (!req.file) {
+    return res.redirect('/inventory/new?error=' + encodeURIComponent('Please attach a JPEG or PNG photo.'));
+  }
+
+  try {
+    const imageBuffer = fs.readFileSync(req.file.path);
+    const mimeType = req.file.mimetype;
+    fs.unlink(req.file.path, () => {});
+
+    const lines = await receipt.extractReceiptLines(imageBuffer, mimeType);
+    const items = await clover.getItems();
+    const itemsJson = JSON.stringify(items.map((i) => ({ id: i.id, name: i.name }))).replace(/</g, '\\u003c');
+
+    const rowsHtml = lines
+      .map((line, i) => {
+        const drinks =
+          line.sizeMl === 750 ? line.count * DRINKS_PER_750ML
+          : line.sizeMl === 1000 ? line.count * DRINKS_PER_1L
+          : '';
+        const match = findBestItemMatch(line.name, items);
+        const sizeLabel = line.sizeMl ? `${line.sizeMl}ml` : (line.rawSize || 'unknown size');
+        const receiptNote = `From receipt: "${line.name}" — ${line.count} × ${sizeLabel}`;
+
+        return renderInventoryRow(i, match, drinks, receiptNote);
+      })
+      .join('');
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Review Inventory</title>
+        <link rel="stylesheet" href="/style.css" />
+      </head>
+      <body>
+        <div class="card">
+          <h1>Review before adding</h1>
+          <p class="subtitle">
+            Check each item and quantity, fix anything that looks wrong, then confirm.
+          </p>
+          <form method="POST" action="/inventory/confirm" id="inventoryForm">
+            <div id="itemRows">${rowsHtml}</div>
+            <button type="button" id="addRowBtn" class="secondary-btn">+ Add another item</button>
+
+            <button type="submit">Add to inventory</button>
+          </form>
+        </div>
+
+        <script>
+          const items = ${itemsJson};
+          const MAX_ROWS = 15;
+          const rowsContainer = document.getElementById('itemRows');
+          const addRowBtn = document.getElementById('addRowBtn');
+          let rowCount = document.querySelectorAll('.item-row').length;
+
+          function wireRow(row) {
+            const searchInput = row.querySelector('.item-search');
+            const hiddenInput = row.querySelector('.item-id-input');
+            const resultsList = row.querySelector('.item-results');
+            const removeBtn = row.querySelector('.remove-row-btn');
+
+            function renderResults(filter) {
+              const q = filter.trim().toLowerCase();
+              const matches = (q ? items.filter((i) => i.name.toLowerCase().includes(q)) : items).slice(0, 25);
+              resultsList.innerHTML = matches.map((i) => \`<li data-id="\${i.id}">\${i.name}</li>\`).join('');
+              resultsList.style.display = matches.length ? 'block' : 'none';
+            }
+
+            searchInput.addEventListener('input', () => {
+              hiddenInput.value = '';
+              renderResults(searchInput.value);
+            });
+            searchInput.addEventListener('focus', () => renderResults(searchInput.value));
+
+            resultsList.addEventListener('click', (e) => {
+              const li = e.target.closest('li[data-id]');
+              if (!li) return;
+              const item = items.find((i) => i.id === li.dataset.id);
+              if (!item) return;
+              hiddenInput.value = item.id;
+              searchInput.value = item.name;
+              resultsList.style.display = 'none';
+            });
+
+            removeBtn.addEventListener('click', () => {
+              row.remove();
+              rowCount--;
+              updateRowControls();
+            });
+          }
+
+          function addRow() {
+            if (rowCount >= MAX_ROWS) return;
+            rowCount++;
+            const row = document.createElement('div');
+            row.className = 'item-row';
+            row.innerHTML = \`
+              <label>Item</label>
+              <div class="item-picker">
+                <input type="text" class="item-search" autocomplete="off" placeholder="Search items…" />
+                <input type="hidden" class="item-id-input" name="itemId" />
+                <ul class="item-results"></ul>
+              </div>
+              <label>Drinks to add</label>
+              <input type="number" class="drinks-input" name="drinksToAdd" step="1" min="1" />
+              <button type="button" class="remove-row-btn danger">Remove item</button>
+            \`;
+            rowsContainer.appendChild(row);
+            wireRow(row);
+            updateRowControls();
+          }
+
+          function updateRowControls() {
+            addRowBtn.style.display = rowCount >= MAX_ROWS ? 'none' : 'block';
+          }
+
+          document.querySelectorAll('.item-row').forEach(wireRow);
+          updateRowControls();
+          addRowBtn.addEventListener('click', addRow);
+
+          document.addEventListener('click', (e) => {
+            if (!e.target.closest('.item-picker')) {
+              document.querySelectorAll('.item-results').forEach((el) => (el.style.display = 'none'));
+            }
+          });
+
+          document.getElementById('inventoryForm').addEventListener('submit', (e) => {
+            const rows = Array.from(document.querySelectorAll('.item-row'));
+            const filled = rows.filter(
+              (r) => r.querySelector('.item-id-input').value && r.querySelector('.drinks-input').value
+            );
+            if (filled.length === 0) {
+              e.preventDefault();
+              alert('Add at least one item with a quantity.');
+              return;
+            }
+            if (filled.length !== rows.length) {
+              e.preventDefault();
+              alert('Finish or remove any row that\\'s missing an item or a quantity.');
+            }
+          });
+        </script>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    fs.unlink(req.file.path, () => {});
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html><body><div class="card"><div class="error-banner">
+        Couldn't read that receipt: ${err.message}
+      </div></div></body></html>
+    `);
+  }
+});
+
+// --- POST /inventory/confirm — write the reviewed quantities to Clover ---
+app.post('/inventory/confirm', requireOwnerAuth, async (req, res) => {
+  const itemIds = [].concat(req.body.itemId || []).filter(Boolean);
+  const drinksToAdd = [].concat(req.body.drinksToAdd || []).map((n) => parseInt(n, 10));
+
+  if (itemIds.length === 0) {
+    return res.status(400).send('At least one item is required.');
+  }
+  if (drinksToAdd.some((n) => !Number.isFinite(n) || n <= 0)) {
+    return res.status(400).send('Quantity must be a positive whole number for every item.');
+  }
+
+  try {
+    const results = [];
+    for (let i = 0; i < itemIds.length; i++) {
+      const item = await clover.getItem(itemIds[i]);
+      const newQuantity = await clover.addToItemStock(itemIds[i], drinksToAdd[i]);
+      results.push(`${item.name}: +${drinksToAdd[i]} (now ${newQuantity})`);
+    }
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Inventory Updated</title>
+        <link rel="stylesheet" href="/style.css" />
+      </head>
+      <body>
+        <div class="card confirmation">
+          <div class="big">✅</div>
+          <p>${results.join('<br>')}</p>
+          <p><a href="/admin/bartenders">Back to admin</a></p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    res.status(500).send(`Something went wrong: ${err.message}`);
+  }
+});
+
 // --- GET /admin/login — each owner signs in with their own phone + passcode ---
 app.get('/admin/login', (req, res) => {
   res.send(`
@@ -587,7 +876,7 @@ app.get('/admin/owners', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Owners</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
         </p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
@@ -674,7 +963,7 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Bartenders</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/owners">Owners</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name} · <a href="/admin/owners">Owners</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
         </p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 

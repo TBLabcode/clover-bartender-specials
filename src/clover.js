@@ -82,9 +82,42 @@ async function getOrdersBetween(startMs, endMs) {
   return res.data.elements || [];
 }
 
+// Get an item's current stock quantity. Returns 0 if the item has no stock
+// record yet (Clover 404s until a quantity has been set at least once).
+async function getItemStock(itemId) {
+  if (DRY_RUN) return 0;
+
+  try {
+    const res = await client.get(`/v3/merchants/${merchantId}/item_stocks/${itemId}`);
+    return res.data.quantity || 0;
+  } catch (err) {
+    if (err.response && err.response.status === 404) return 0;
+    throw err;
+  }
+}
+
+// Adds quantityToAdd (may be negative) to an item's current stock and
+// returns the new quantity.
+async function addToItemStock(itemId, quantityToAdd) {
+  const current = await getItemStock(itemId);
+  const newQuantity = current + quantityToAdd;
+
+  if (DRY_RUN) {
+    console.log(`[DRY RUN] Would set stock for item ${itemId} to ${newQuantity} on Clover`);
+    return newQuantity;
+  }
+
+  const res = await client.post(`/v3/merchants/${merchantId}/item_stocks/${itemId}`, {
+    quantity: newQuantity,
+  });
+  return res.data.quantity;
+}
+
 module.exports = {
   getItems,
   getItem,
   updateItemPrice,
   getOrdersBetween,
+  getItemStock,
+  addToItemStock,
 };
