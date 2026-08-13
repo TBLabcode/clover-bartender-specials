@@ -4,7 +4,8 @@
   "description": "Bartender specials app: submit a special, get text approval, auto-revert at 3am, daily sales/discount text report.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "generate:compliance": "node scripts/generate-compliance-pages.js"
   },
   "dependencies": {
     "axios": "^1.7.7",
