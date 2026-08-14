@@ -1,5 +1,9 @@
 {
   "businessName": "The Last Resort Beach Bar",
   "legalName": "The Last Resort Beach Bar, LLC",
-  "contactEmail": "tblabcode@gmail.com"
+  "contactEmail": "tblabcode@gmail.com",
+  "tagline": "Carolina Beach's smallest bar — a great local dive bar spot",
+  "category": "Dive Bar",
+  "streetAddress": "600 N Lake Park Blvd",
+  "cityStateZip": "Carolina Beach, NC 28428"
 }
