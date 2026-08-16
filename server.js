@@ -404,6 +404,7 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
 // --- POST /specials/new — bartender submits the form (up to 5 items, one approval code) ---
 app.post('/specials/new', requireBartenderAuth, async (req, res) => {
   const bartenderName = req.bartender.name;
+  const bartenderPhone = req.bartender.phone;
   const itemIds = [].concat(req.body.itemId || []).filter(Boolean);
   const specialPrices = [].concat(req.body.specialPrice || []);
 
@@ -429,7 +430,7 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
   if (conflict) {
     return res.status(409).send(
       'One of these items already has a special pending approval. ' +
-      'Wait for it to be approved or ask an approver to ignore it before submitting another.'
+      'Wait for it to be approved or denied before submitting another.'
     );
   }
 
@@ -445,6 +446,7 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
     const request = {
       id: shortId(),
       bartenderName,
+      bartenderPhone,
       items,
       createdAt: Date.now(),
     };
@@ -456,7 +458,7 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
 
     await sms.notifyApprovers(
       `${bartenderName} wants to special:\n${itemLines}\n` +
-      `Reply YES ${request.id} to approve all.`
+      `Reply YES ${request.id} to approve, or NO ${request.id} to deny.`
     );
 
     res.send(`
@@ -1143,16 +1145,20 @@ app.post('/sms/incoming', async (req, res) => {
     return res.send('<Response></Response>');
   }
 
-  const match = body.match(/^YES\s+([a-zA-Z0-9]+)$/i) || body.match(/^YES$/i);
+  const match =
+    body.match(/^(YES|NO)\s+([a-zA-Z0-9]+)$/i) || body.match(/^(YES|NO)$/i);
   if (!match) {
-    return res.send('<Response><Message>Reply "YES [code]" to approve a special.</Message></Response>');
+    return res.send('<Response><Message>Reply "YES [code]" to approve or "NO [code]" to deny a special.</Message></Response>');
   }
+
+  const decision = match[1].toUpperCase();
+  const code = match[2];
 
   const pending = db.getPendingRequests();
   let request;
 
-  if (match[1]) {
-    request = pending.find((r) => r.id.toLowerCase() === match[1].toLowerCase());
+  if (code) {
+    request = pending.find((r) => r.id.toLowerCase() === code.toLowerCase());
   } else if (pending.length === 1) {
     request = pending[0];
   }
@@ -1162,6 +1168,17 @@ app.post('/sms/incoming', async (req, res) => {
   }
 
   db.removePendingRequest(request.id);
+
+  if (decision === 'NO') {
+    await sms.notifyApprovers(`${request.bartenderName}'s special was denied by ${from}.`);
+    if (request.bartenderPhone) {
+      await sms.sendText(
+        request.bartenderPhone,
+        `Your special (${request.items.map((i) => i.itemName).join(', ')}) was denied.`
+      );
+    }
+    return res.send('<Response></Response>');
+  }
 
   const results = [];
   for (const item of request.items) {
@@ -1184,6 +1201,13 @@ app.post('/sms/incoming', async (req, res) => {
   await sms.notifyApprovers(
     `${results.join('\n')}\nApproved by ${from}. Reverts automatically at 3am.`
   );
+
+  if (request.bartenderPhone) {
+    await sms.sendText(
+      request.bartenderPhone,
+      `Your special was approved:\n${results.join('\n')}\nReverts automatically at 3am.`
+    );
+  }
 
   res.send('<Response></Response>');
 });
