@@ -17,18 +17,20 @@ function getYesterdayRange() {
   return [startOfYesterday.getTime(), startOfToday.getTime()];
 }
 
-// --- 3am job: revert every active special back to its original price ---
+// --- 8am job: revert every active special back to its original price ---
 async function revertExpiredSpecials() {
   const active = db.getActiveSpecials();
   if (active.length === 0) return;
 
   const results = [];
+  const failures = [];
   for (const special of active) {
     try {
       await clover.updateItemPrice(special.itemId, special.originalPrice);
       results.push(`${special.itemName} back to ${formatMoney(special.originalPrice)}`);
     } catch (err) {
       results.push(`FAILED to revert ${special.itemName}: ${err.message}`);
+      failures.push(`${special.itemName}: ${err.message}`);
     }
   }
 
@@ -37,6 +39,12 @@ async function revertExpiredSpecials() {
   await sms.notifyApprovers(
     `Specials reverted for the day:\n${results.join('\n')}`
   );
+
+  if (failures.length > 0) {
+    await sms.notifyOwners(
+      `⚠️ ${failures.length} special${failures.length > 1 ? 's' : ''} failed to revert automatically — check Clover manually:\n${failures.join('\n')}`
+    );
+  }
 }
 
 // --- Daily report job: yesterday's sales + discounts, texted out ---
@@ -72,8 +80,8 @@ async function sendDailyReport() {
 function start() {
   const tz = process.env.APP_TIMEZONE || 'America/New_York';
 
-  // 3:00 AM every day — revert specials
-  cron.schedule('0 3 * * *', () => {
+  // 8:00 AM every day — revert specials
+  cron.schedule('0 8 * * *', () => {
     revertExpiredSpecials().catch((err) =>
       console.error('Error reverting specials:', err.message)
     );

@@ -1,4 +1,5 @@
 const twilio = require('twilio');
+const db = require('./db');
 
 const DRY_RUN = process.env.TWILIO_DRY_RUN === 'true';
 
@@ -42,8 +43,25 @@ async function notifyApprovers(body) {
   return results;
 }
 
+// Send the same text to every registered owner (db.getOwners()), not the
+// fixed APPROVER_PHONE_NUMBERS list — used for alerts owners specifically
+// need to see, like a failed revert. Owner phone numbers are stored as
+// plain 10-digit US numbers, so E.164-format them here before sending.
+async function notifyOwners(body) {
+  const ownerNumbers = db.getOwners().map((o) => `+1${o.phone}`);
+  const results = await Promise.allSettled(ownerNumbers.map((num) => sendText(num, body)));
+
+  const failures = results.filter((r) => r.status === 'rejected');
+  if (failures.length > 0) {
+    failures.forEach((f) => console.error('Failed to text an owner:', f.reason.message));
+  }
+
+  return results;
+}
+
 module.exports = {
   sendText,
   notifyApprovers,
+  notifyOwners,
   approverNumbers,
 };

@@ -286,7 +286,7 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
 
         <script>
           const items = ${itemsJson};
-          const MAX_ROWS = 5;
+          const MAX_ROWS = 16;
           const rowsContainer = document.getElementById('itemRows');
           const addRowBtn = document.getElementById('addRowBtn');
           let rowCount = 0;
@@ -401,7 +401,7 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
   }
 });
 
-// --- POST /specials/new — bartender submits the form (up to 5 items, one approval code) ---
+// --- POST /specials/new — bartender submits the form (up to 16 items, one approval code) ---
 app.post('/specials/new', requireBartenderAuth, async (req, res) => {
   const bartenderName = req.bartender.name;
   const bartenderPhone = req.bartender.phone;
@@ -411,8 +411,8 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
   if (itemIds.length === 0) {
     return res.status(400).send('At least one item is required.');
   }
-  if (itemIds.length > 5) {
-    return res.status(400).send('You can submit at most 5 items at once.');
+  if (itemIds.length > 16) {
+    return res.status(400).send('You can submit at most 16 items at once.');
   }
   if (new Set(itemIds).size !== itemIds.length) {
     return res.status(400).send('The same item was selected more than once.');
@@ -1199,13 +1199,13 @@ app.post('/sms/incoming', async (req, res) => {
   }
 
   await sms.notifyApprovers(
-    `${results.join('\n')}\nApproved by ${from}. Reverts automatically at 3am.`
+    `${results.join('\n')}\nApproved by ${from}. Reverts automatically at 8am.`
   );
 
   if (request.bartenderPhone) {
     await sms.sendText(
       request.bartenderPhone,
-      `Your special was approved:\n${results.join('\n')}\nReverts automatically at 3am.`
+      `Your special was approved:\n${results.join('\n')}\nReverts automatically at 8am.`
     );
   }
 

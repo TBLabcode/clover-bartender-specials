@@ -2,7 +2,7 @@
 
 Bartenders submit a special through a simple web form → you or your partner
 approve it by replying "YES" to a text → the price changes in Clover →
-it automatically reverts at 3am → every morning you get a text with
+it automatically reverts at 8am → every morning you get a text with
 yesterday's sales and discounts.
 
 ## What you need before starting
@@ -84,7 +84,7 @@ https://your-deployed-url.com/sms/incoming
 ### 5. Deploy it somewhere that runs 24/7
 
 This needs to keep running even when your computer is off, so it can
-catch the 3am revert and morning report. Simple, cheap options:
+catch the 8am revert and morning report. Simple, cheap options:
 Railway, Render, or a small DigitalOcean droplet. Any of these can run
 a Node app like this for a few dollars a month. When you deploy, you'll
 set the same values from your `.env` file as environment variables in
@@ -103,7 +103,7 @@ Bookmark it on their phones.
 - **`src/clover.js`** — everything that talks to Clover (reading items,
   changing a price, pulling yesterday's orders).
 - **`src/sms.js`** — sends texts through Twilio.
-- **`src/scheduler.js`** — the 3am revert job and the daily report job.
+- **`src/scheduler.js`** — the 8am revert job and the daily report job.
 - **`src/db.js`** — tracks pending requests and currently-active specials
   in `data/db.json` (a plain file — no database server needed).
 
