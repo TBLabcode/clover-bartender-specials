@@ -23,6 +23,29 @@ const client = axios.create({
   },
 });
 
+// Retry on 429 (rate limited) instead of failing outright — the inventory
+// import in particular fires several sequential requests per line item and
+// can trip Clover's rate limit on receipts with more than a couple items.
+// Honors Retry-After when Clover sends one, otherwise backs off 0.5s/1s/2s.
+const MAX_429_RETRIES = 3;
+client.interceptors.response.use(
+  (res) => res,
+  async (err) => {
+    const config = err.config;
+    if (!config || !err.response || err.response.status !== 429) throw err;
+
+    config.__retryCount = config.__retryCount || 0;
+    if (config.__retryCount >= MAX_429_RETRIES) throw err;
+    config.__retryCount += 1;
+
+    const retryAfter = err.response.headers['retry-after'];
+    const delayMs = retryAfter ? parseFloat(retryAfter) * 1000 : 500 * 2 ** (config.__retryCount - 1);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+    return client(config);
+  }
+);
+
 const merchantId = process.env.CLOVER_MERCHANT_ID;
 
 // Get all inventory items (id, name, current price in cents, merchant SKU/code)

@@ -589,10 +589,12 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
 
             <button type="submit">Import Items</button>
           </form>
+          <p class="subtitle"><a href="/menu">Cancel</a></p>
         </div>
         <div id="loadingView" class="loading-view">
           <div class="spinner-beer">🍺</div>
           <p class="subtitle">Reading your receipt…</p>
+          <p class="subtitle"><a href="/menu">Cancel</a></p>
         </div>
       </div>
 
@@ -601,6 +603,17 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
           if (!document.getElementById('receipt').files.length) return;
           document.getElementById('uploadView').style.display = 'none';
           document.getElementById('loadingView').style.display = 'block';
+        });
+
+        // If the browser restores this page from cache (e.g. hitting Back
+        // after submitting), reset back to the upload view instead of
+        // leaving the spinner frozen with nothing left to hide it.
+        window.addEventListener('pageshow', (event) => {
+          if (event.persisted) {
+            document.getElementById('uploadView').style.display = 'block';
+            document.getElementById('loadingView').style.display = 'none';
+            document.getElementById('receiptForm').reset();
+          }
         });
       </script>
     </body>
@@ -659,6 +672,7 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
 
             <button type="submit">Add to inventory</button>
           </form>
+          <p class="subtitle"><a href="/menu">Cancel</a></p>
         </div>
 
         <script>
@@ -817,51 +831,60 @@ app.post('/inventory/confirm', requireOwnerAuth, async (req, res) => {
   if (drinksToAdd.some((n) => !Number.isFinite(n) || n <= 0)) {
     return res.status(400).send('Quantity must be a positive whole number for every item.');
   }
+  const newItemPriceCents = newItemPrices.map(dollarsToCents);
   for (let i = 0; i < rowCount; i++) {
-    if (!itemIds[i] && !(newItemNames[i] && newItemPrices[i])) {
-      return res.status(400).send('Every row needs either an existing item or a new item name + price.');
+    if (!itemIds[i] && !(newItemNames[i] && Number.isFinite(newItemPriceCents[i]) && newItemPriceCents[i] >= 0)) {
+      return res.status(400).send(`Every row needs either an existing item, or a new item name + valid price.`);
     }
   }
 
-  try {
-    const results = [];
-    for (let i = 0; i < rowCount; i++) {
+  // Each row is its own Clover round-trip (or two, for a brand-new item),
+  // fired sequentially with no gap between them — on a receipt with several
+  // lines this can trip Clover's rate limit. Catch failures per row instead
+  // of letting one bad row throw away every row that already succeeded.
+  const succeeded = [];
+  const failed = [];
+  for (let i = 0; i < rowCount; i++) {
+    try {
       let item;
       if (itemIds[i]) {
         item = await clover.getItem(itemIds[i]);
       } else {
-        const priceCents = dollarsToCents(newItemPrices[i]);
-        if (!Number.isFinite(priceCents) || priceCents < 0) {
-          return res.status(400).send(`Invalid price for new item "${newItemNames[i]}".`);
-        }
-        item = await clover.createItem(newItemNames[i], priceCents, newItemCodes[i]);
+        item = await clover.createItem(newItemNames[i], newItemPriceCents[i], newItemCodes[i]);
       }
       const newQuantity = await clover.addToItemStock(item.id, drinksToAdd[i]);
       const newTag = itemIds[i] ? '' : ' (new item)';
-      results.push(`${item.name}${newTag}: +${drinksToAdd[i]} (now ${newQuantity})`);
+      succeeded.push(`${item.name}${newTag}: +${drinksToAdd[i]} (now ${newQuantity})`);
+    } catch (err) {
+      const label = itemIds[i] ? itemIds[i] : newItemNames[i];
+      failed.push(`${label}: ${err.message}`);
     }
-
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Inventory Updated</title>
-        <link rel="stylesheet" href="/style.css" />
-      </head>
-      <body>
-        <div class="card confirmation">
-          <div class="big">✅</div>
-          <p>${results.join('<br>')}</p>
-          <p><a href="/admin/bartenders">Back to admin</a></p>
-        </div>
-      </body>
-      </html>
-    `);
-  } catch (err) {
-    res.status(500).send(`Something went wrong: ${err.message}`);
   }
+
+  const summaryHtml = [
+    ...succeeded.map((line) => `✅ ${line}`),
+    ...failed.map((line) => `❌ ${line}`),
+  ].join('<br>');
+
+  res.status(failed.length > 0 ? 207 : 200).send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Inventory Updated</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card confirmation">
+        <div class="big">${failed.length > 0 ? '⚠️' : '✅'}</div>
+        <p>${summaryHtml}</p>
+        ${failed.length > 0 ? `<p class="subtitle">${failed.length} item${failed.length > 1 ? 's' : ''} failed — the ones marked ✅ above were still added. Retry the failed ones separately.</p>` : ''}
+        <p><a href="/admin/bartenders">Back to admin</a></p>
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 // --- GET /admin/login — each owner signs in with their own phone + passcode ---
