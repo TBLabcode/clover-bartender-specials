@@ -93,6 +93,16 @@ function findBartenderByPhone(phone) {
   return readDb().bartenders.find((b) => normalizePhone(b.phone) === target) || null;
 }
 
+function setBartenderConsentVersion(id, version) {
+  const data = readDb();
+  const bartender = data.bartenders.find((b) => b.id === id);
+  if (!bartender) return null;
+  bartender.smsConsentVersion = version;
+  bartender.consentAcceptedAt = Date.now();
+  writeDb(data);
+  return bartender;
+}
+
 function removeBartender(id) {
   const data = readDb();
   const idx = data.bartenders.findIndex((b) => b.id === id);
@@ -175,6 +185,7 @@ module.exports = {
   addBartender,
   getBartenders,
   findBartenderByPhone,
+  setBartenderConsentVersion,
   removeBartender,
   addSession,
   findSessionByToken,

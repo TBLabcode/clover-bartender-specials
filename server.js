@@ -23,6 +23,12 @@ const receipt = require('./src/receipt');
 const DRINKS_PER_750ML = 17;
 const DRINKS_PER_1L = 22;
 
+// Bumped whenever the SMS consent script changes what message types a
+// bartender is told they'll receive (see templates/sms-consent.html).
+// Bartenders below this version are gated to /consent until they
+// re-accept, rather than assuming old consent covers new message types.
+const SMS_CONSENT_VERSION = 2;
+
 function normalizeItemName(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -148,6 +154,14 @@ function requireBartenderAuth(req, res, next) {
   next();
 }
 
+// Gates access behind /consent for any bartender who hasn't re-accepted
+// the current SMS consent script yet (added before it changed, or never
+// stamped at all). Must run after requireBartenderAuth.
+function requireCurrentConsent(req, res, next) {
+  if ((req.bartender.smsConsentVersion || 0) >= SMS_CONSENT_VERSION) return next();
+  res.redirect('/consent');
+}
+
 function requireOwnerAuth(req, res, next) {
   const cookies = auth.parseCookies(req);
   const token = cookies[auth.ADMIN_COOKIE];
@@ -219,8 +233,65 @@ app.post('/login', (req, res) => {
   res.redirect('/menu');
 });
 
+// --- GET /consent — re-opt-in prompt for the current SMS consent script ---
+app.get('/consent', requireBartenderAuth, (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Confirm text updates</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Before you continue</h1>
+        <p class="subtitle">
+          The texts you get from this system have changed — please confirm you're still okay
+          with them before signing back in.
+        </p>
+        <p>
+          "You'll get a text whenever a bartender submits a special for approval, a text if an
+          open shift needs covering, plus one daily sales summary text. Message and data rates
+          may apply. You can reply STOP at any time to stop receiving these texts. Do you agree
+          to receive these texts at this number?"
+        </p>
+        <p class="subtitle">
+          Full details: <a href="/sms-consent.html" target="_blank">SMS Consent Process</a>
+        </p>
+        <form method="POST" action="/consent">
+          <button type="submit" name="decision" value="accept">I agree — continue</button>
+        </form>
+        <form method="POST" action="/consent" style="margin-top: 10px;">
+          <button type="submit" name="decision" value="decline" class="danger">
+            I don't agree — sign me out
+          </button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /consent — record acceptance (or decline) of the current script ---
+app.post('/consent', requireBartenderAuth, (req, res) => {
+  if (req.body.decision !== 'accept') {
+    const cookies = auth.parseCookies(req);
+    const token = cookies[auth.SESSION_COOKIE];
+    if (token) db.removeSession(token);
+    auth.clearCookie(res, auth.SESSION_COOKIE);
+    return res.redirect('/login?error=' + encodeURIComponent(
+      'You need to agree to the updated text terms to keep using this system — talk to a manager if you have questions.'
+    ));
+  }
+
+  db.setBartenderConsentVersion(req.bartender.id, SMS_CONSENT_VERSION);
+  res.redirect('/menu');
+});
+
 // --- GET /menu — bartender picks what to do ---
-app.get('/menu', requireBartenderAuth, (req, res) => {
+app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -254,7 +325,7 @@ app.get('/logout', (req, res) => {
 });
 
 // --- GET /specials/new — the bartender-facing form ---
-app.get('/specials/new', requireBartenderAuth, async (req, res) => {
+app.get('/specials/new', requireBartenderAuth, requireCurrentConsent, async (req, res) => {
   try {
     const items = await clover.getItems();
     const itemsJson = JSON.stringify(
@@ -402,7 +473,7 @@ app.get('/specials/new', requireBartenderAuth, async (req, res) => {
 });
 
 // --- POST /specials/new — bartender submits the form (up to 16 items, one approval code) ---
-app.post('/specials/new', requireBartenderAuth, async (req, res) => {
+app.post('/specials/new', requireBartenderAuth, requireCurrentConsent, async (req, res) => {
   const bartenderName = req.bartender.name;
   const bartenderPhone = req.bartender.phone;
   const itemIds = [].concat(req.body.itemId || []).filter(Boolean);
@@ -485,7 +556,7 @@ app.post('/specials/new', requireBartenderAuth, async (req, res) => {
 });
 
 // --- GET /social/new — bartender posts a photo to Facebook + Instagram ---
-app.get('/social/new', requireBartenderAuth, (req, res) => {
+app.get('/social/new', requireBartenderAuth, requireCurrentConsent, (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -518,7 +589,7 @@ app.get('/social/new', requireBartenderAuth, (req, res) => {
 });
 
 // --- POST /social/new — upload the photo, post it, then clean up the file ---
-app.post('/social/new', requireBartenderAuth, upload.single('photo'), async (req, res) => {
+app.post('/social/new', requireBartenderAuth, requireCurrentConsent, upload.single('photo'), async (req, res) => {
   const caption = (req.body.caption || '').trim();
 
   if (!req.file) {
@@ -1146,6 +1217,9 @@ app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
     phone: normalizedPhone,
     passcodeHash: auth.hashPasscode(passcode),
     createdAt: Date.now(),
+    // Owner reads the current script live when adding them, so no /consent gate needed.
+    smsConsentVersion: SMS_CONSENT_VERSION,
+    consentAcceptedAt: Date.now(),
   });
 
   res.redirect('/admin/bartenders');
