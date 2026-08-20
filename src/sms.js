@@ -12,8 +12,12 @@ const approverNumbers = (process.env.APPROVER_PHONE_NUMBERS || '')
   .map((n) => n.trim())
   .filter(Boolean);
 
-// Send one text to a single number
-async function sendText(toNumber, body) {
+// Send one text to a single number. Defaults to the specials-approval
+// Messaging Service/number; pass TWILIO_SHIFT_MESSAGING_SERVICE_SID to
+// send from the separate shift-coverage number instead — these are two
+// distinct A2P campaigns and each recipient must have opted into the
+// one they're being sent from (see /sms-consent.html).
+async function sendText(toNumber, body, messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID) {
   if (DRY_RUN) {
     console.log(`[DRY RUN] Would text ${toNumber}:\n${body}\n`);
     return { sid: 'DRY_RUN', to: toNumber, body };
@@ -21,9 +25,15 @@ async function sendText(toNumber, body) {
 
   return client.messages.create({
     to: toNumber,
-    messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
+    messagingServiceSid,
     body,
   });
+}
+
+// Send one text from the shift-coverage number (a separate A2P campaign
+// from the specials-approval flow above — see TWILIO_SHIFT_MESSAGING_SERVICE_SID).
+async function sendShiftText(toNumber, body) {
+  return sendText(toNumber, body, process.env.TWILIO_SHIFT_MESSAGING_SERVICE_SID);
 }
 
 // Send the same text to every approver (you + your business partner).
@@ -59,9 +69,28 @@ async function notifyOwners(body) {
   return results;
 }
 
+// Send a shift-coverage text (open shift, or a claim confirmation) to every
+// registered bartender, from the shift-coverage number — not the specials-
+// approval number notifyApprovers/notifyOwners use. Only bartenders who
+// opted into shift-coverage texts (smsConsentVersion current) should be
+// passed in once that gate exists on this flow's own callers.
+async function notifyBartendersShift(body) {
+  const bartenderNumbers = db.getBartenders().map((b) => `+1${b.phone}`);
+  const results = await Promise.allSettled(bartenderNumbers.map((num) => sendShiftText(num, body)));
+
+  const failures = results.filter((r) => r.status === 'rejected');
+  if (failures.length > 0) {
+    failures.forEach((f) => console.error('Failed to text a bartender about a shift:', f.reason.message));
+  }
+
+  return results;
+}
+
 module.exports = {
   sendText,
+  sendShiftText,
   notifyApprovers,
   notifyOwners,
+  notifyBartendersShift,
   approverNumbers,
 };
