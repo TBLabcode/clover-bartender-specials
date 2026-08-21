@@ -50,9 +50,14 @@ async function extractReceiptLines(imageBuffer, mimeType) {
                 'This is a photo of a delivery or purchase receipt/invoice for a bar, likely from an ' +
                 'alcohol distributor. Extract every line item that represents alcohol or drink product ' +
                 '(including mixers, energy drinks, garnish syrups, etc.) received. Distributor invoices ' +
-                'often use heavy abbreviations (e.g. "F/C" = Finest Call, "VDKA" = Vodka, "RTU" = Ready ' +
-                'to Use, "LS" = Long Sleeve/Slim can) — use your knowledge of common liquor brands and ' +
-                'distributor shorthand to recognize the actual product, don\'t just transcribe letters.\n\n' +
+                'often use heavy abbreviations — for liquor: "F/C" = Finest Call, "VDKA" = Vodka, "RTU" = ' +
+                'Ready to Use, "LS" = Long Sleeve/Slim can; for beer: "MHL" = Miller High Life (NOT ' +
+                'Michelob), "MGD" = Miller Genuine Draft, "BL" = Bud Light, "PBR" = Pabst Blue Ribbon, ' +
+                '"NATTY"/"NAT LT" = Natural Light. Use your knowledge of common liquor/beer brands and ' +
+                'distributor shorthand to recognize the actual product, don\'t just transcribe letters — ' +
+                'but a short 2-4 letter code can look like several different brands, so only expand it ' +
+                'when you\'re genuinely confident which brand it is, not your first guess at a plausible ' +
+                'one.\n\n' +
                 'For each line, identify:\n' +
                 '- "name": the product name exactly as printed on the line.\n' +
                 '- "displayName": a clean, human-readable product name with abbreviations expanded and ' +
