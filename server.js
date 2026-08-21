@@ -67,14 +67,22 @@ function findBestItemMatch(extractedName, items, extractedCode) {
   // Clover's item order. Jaccard penalizes the extra unmatched "na" word,
   // so the tighter, correct match wins instead of an alphabetical coin flip.
   const targetWords = new Set(target.split(' '));
-  const minOverlap = Math.max(2, Math.ceil(targetWords.size / 2));
   let best = null;
   let bestJaccard = -1;
   for (const item of items) {
     const itemWords = new Set(normalizeItemName(item.name).split(' ').filter(Boolean));
+    if (itemWords.size === 0) continue;
     let overlap = 0;
     for (const w of itemWords) if (targetWords.has(w)) overlap++;
-    if (overlap < minOverlap) continue;
+
+    // Gate on how much of the CATALOG item's own name is accounted for, not
+    // how much of the (often noisier) extracted name is — a short, exact
+    // item name like "White Claw Black Cherry" shouldn't need to out-overlap
+    // packaging/size words ("2/12 12oz Can") the catalog will never contain.
+    // The overlap>=2 floor keeps single/short-word items off this fuzzy path
+    // entirely (they rely on exact/contains matching above, which is safer).
+    const coverage = overlap / itemWords.size;
+    if (overlap < 2 || coverage < 0.6) continue;
 
     const union = new Set([...targetWords, ...itemWords]).size;
     const jaccard = overlap / union;
