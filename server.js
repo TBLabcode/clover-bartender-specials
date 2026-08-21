@@ -55,7 +55,12 @@ function findBestItemMatch(extractedName, items, extractedCode) {
   });
   if (contains) return contains;
 
+  // Fuzzy fallback: only trust this when the overlap is substantial, not just
+  // one coincidentally-shared word (e.g. "F/C Sweet/Sour RTU" sharing "sour"
+  // with "Sour Apple" is NOT a real match — leave it unmatched instead of
+  // confidently guessing wrong; the review screen will offer "add as new").
   const targetWords = new Set(target.split(' '));
+  const minOverlap = Math.max(2, Math.ceil(targetWords.size / 2));
   let best = null;
   let bestScore = 0;
   for (const item of items) {
@@ -67,7 +72,7 @@ function findBestItemMatch(extractedName, items, extractedCode) {
       best = item;
     }
   }
-  return best;
+  return bestScore >= minOverlap ? best : null;
 }
 
 function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatchedName, unmatchedCode) {
@@ -715,12 +720,17 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
           line.sizeMl === 750 ? line.count * DRINKS_PER_750ML
           : line.sizeMl === 1000 ? line.count * DRINKS_PER_1L
           : '';
-        const match = findBestItemMatch(line.name, items, line.code);
+        const lookupName = line.displayName || line.name;
+        const match = findBestItemMatch(lookupName, items, line.code);
         const sizeLabel = line.sizeMl ? `${line.sizeMl}ml` : (line.rawSize || 'unknown size');
         const codeNote = line.code ? ` (code ${line.code})` : '';
-        const receiptNote = `From receipt: "${line.name}"${codeNote} — ${line.count} × ${sizeLabel}`;
+        const nameNote = lookupName !== line.name ? `"${line.name}" → ${lookupName}` : `"${line.name}"`;
+        const caseNote = line.caseCount && line.unitsPerCase
+          ? ` (${line.caseCount} case${line.caseCount === 1 ? '' : 's'} × ${line.unitsPerCase}/case)`
+          : '';
+        const receiptNote = `From receipt: ${nameNote}${codeNote} — ${line.count}${caseNote} × ${sizeLabel}`;
 
-        return renderInventoryRow(i, match, drinks, receiptNote, match ? null : line.name, line.code);
+        return renderInventoryRow(i, match, drinks, receiptNote, match ? null : lookupName, line.code);
       })
       .join('');
 

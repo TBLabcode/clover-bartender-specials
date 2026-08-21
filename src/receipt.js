@@ -6,13 +6,25 @@ const axios = require('axios');
 const DRY_RUN = process.env.RECEIPT_DRY_RUN === 'true';
 
 const MOCK_LINES = [
-  { name: 'Grey Goose', code: 'GG750', sizeMl: 750, count: 6 },
-  { name: 'Coors Light', code: '', sizeMl: null, rawSize: '24-pack cans', count: 1 },
+  { name: 'GREY GOOSE 750', displayName: 'Grey Goose', code: 'GG750', sizeMl: 750, caseCount: null, unitsPerCase: null, count: 6 },
+  { name: 'COORS LT 24PK CAN', displayName: 'Coors Light', code: '', sizeMl: null, rawSize: '24-pack cans', caseCount: 1, unitsPerCase: 24, count: 24 },
 ];
 
-// Returns an array of { name, code, sizeMl, count, rawSize? } extracted from the photo.
-// sizeMl is 750, 1000, or null if the size can't be determined as one of those.
-// code is the distributor/product code printed on the receipt, if any (empty string if none).
+// Returns an array of line items extracted from the photo:
+//   name          - the product name exactly as printed on the receipt
+//   displayName   - a clean, recognizable product name (brand abbreviations expanded,
+//                   e.g. "F/C" -> "Finest Call", "VDKA" -> "Vodka", "RTU" -> "Ready to Use"),
+//                   used for matching against the real item catalog. Same as `name` if
+//                   nothing needed expanding.
+//   code          - distributor/product/SKU code printed on the line, if any ('' if none)
+//   sizeMl        - bottle/can size in milliliters if determinable from the printed size
+//                   (e.g. 750, 1000, 250), else null
+//   rawSize       - whatever size text is printed, if sizeMl couldn't be pinned to a number
+//   caseCount     - number of cases/cartons shipped, if the receipt bills by the case (else null)
+//   unitsPerCase  - individual bottles/cans per case, if printed (else null)
+//   count         - TOTAL individual bottles/units received. When the receipt shows a case
+//                   quantity and a units-per-case count, this MUST be caseCount * unitsPerCase,
+//                   not the raw case number.
 async function extractReceiptLines(imageBuffer, mimeType) {
   if (DRY_RUN) {
     console.log('[DRY RUN] Would send receipt photo to Claude for extraction');
@@ -35,16 +47,34 @@ async function extractReceiptLines(imageBuffer, mimeType) {
             {
               type: 'text',
               text:
-                'This is a photo of a delivery or purchase receipt for a bar. Extract every line ' +
-                'item that represents alcohol or drink product received. For each line, identify: ' +
-                'the product name as printed, the distributor/product/SKU code printed on that line ' +
-                'if there is one (often a short alphanumeric code near the start or end of the line, ' +
-                'separate from the product name — empty string if none is printed), the bottle size ' +
-                'in milliliters (750 for a standard 750ml bottle, 1000 for a 1 liter bottle, or null ' +
-                'if the size is something else or unclear), and the quantity of bottles/units ' +
-                'received. Respond with ONLY a JSON array, no other text, in this exact shape: ' +
-                '[{"name": "...", "code": "...", "sizeMl": 750, "count": 6}]. ' +
-                'If sizeMl is null, include a "rawSize" field with whatever size text is printed, if any.',
+                'This is a photo of a delivery or purchase receipt/invoice for a bar, likely from an ' +
+                'alcohol distributor. Extract every line item that represents alcohol or drink product ' +
+                '(including mixers, energy drinks, garnish syrups, etc.) received. Distributor invoices ' +
+                'often use heavy abbreviations (e.g. "F/C" = Finest Call, "VDKA" = Vodka, "RTU" = Ready ' +
+                'to Use, "LS" = Long Sleeve/Slim can) — use your knowledge of common liquor brands and ' +
+                'distributor shorthand to recognize the actual product, don\'t just transcribe letters.\n\n' +
+                'For each line, identify:\n' +
+                '- "name": the product name exactly as printed on the line.\n' +
+                '- "displayName": a clean, human-readable product name with abbreviations expanded and ' +
+                'the real brand/product identified (e.g. "F/C SWEET/SOUR RTU" -> "Finest Call Sweet & ' +
+                'Sour Mix"). If you cannot confidently identify the product beyond what\'s printed, repeat ' +
+                '"name" here rather than guessing.\n' +
+                '- "code": the distributor/product/SKU code printed on that line, if any (a short ' +
+                'alphanumeric code, separate from any UPC barcode number — empty string if none).\n' +
+                '- "sizeMl": the bottle/can size in milliliters as a number if the receipt states or ' +
+                'implies a metric size (e.g. "750 ML" -> 750, "1 LT" -> 1000, "250 ML" -> 250), else null.\n' +
+                '- "rawSize": whatever size text is printed, if sizeMl is null or as a backup reference.\n' +
+                '- "caseCount": if the invoice bills this line by the case/carton (look for a column ' +
+                'labeled like "Cs", "Cases", "Ctn"), the number of cases shipped — else null.\n' +
+                '- "unitsPerCase": if there\'s a bottles/units-per-case column (e.g. "BPC", "Pack", "Per ' +
+                'Cs"), that number — else null.\n' +
+                '- "count": the TOTAL number of individual bottles/cans/units received. If caseCount and ' +
+                'unitsPerCase are both known, this MUST equal caseCount * unitsPerCase — never just the ' +
+                'raw case number. If the invoice already states an individual unit/bottle quantity ' +
+                'directly, use that instead.\n\n' +
+                'Respond with ONLY a JSON array, no other text, in this exact shape: ' +
+                '[{"name": "...", "displayName": "...", "code": "...", "sizeMl": 750, "rawSize": "", ' +
+                '"caseCount": null, "unitsPerCase": null, "count": 6}]',
             },
           ],
         },
