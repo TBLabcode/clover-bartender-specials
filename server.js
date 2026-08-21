@@ -59,20 +59,31 @@ function findBestItemMatch(extractedName, items, extractedCode) {
   // one coincidentally-shared word (e.g. "F/C Sweet/Sour RTU" sharing "sour"
   // with "Sour Apple" is NOT a real match — leave it unmatched instead of
   // confidently guessing wrong; the review screen will offer "add as new").
+  //
+  // Ranked by Jaccard similarity (overlap / union of words), not raw overlap
+  // count — raw count treats "White Claw Black Cherry" and "White Claw NA
+  // Black Cherry" as equally good matches for "White Claw ... Black Cherry"
+  // (both share 4 words) and silently picks whichever comes first in
+  // Clover's item order. Jaccard penalizes the extra unmatched "na" word,
+  // so the tighter, correct match wins instead of an alphabetical coin flip.
   const targetWords = new Set(target.split(' '));
   const minOverlap = Math.max(2, Math.ceil(targetWords.size / 2));
   let best = null;
-  let bestScore = 0;
+  let bestJaccard = -1;
   for (const item of items) {
-    const overlap = normalizeItemName(item.name)
-      .split(' ')
-      .filter((w) => targetWords.has(w)).length;
-    if (overlap > bestScore) {
-      bestScore = overlap;
+    const itemWords = new Set(normalizeItemName(item.name).split(' ').filter(Boolean));
+    let overlap = 0;
+    for (const w of itemWords) if (targetWords.has(w)) overlap++;
+    if (overlap < minOverlap) continue;
+
+    const union = new Set([...targetWords, ...itemWords]).size;
+    const jaccard = overlap / union;
+    if (jaccard > bestJaccard) {
+      bestJaccard = jaccard;
       best = item;
     }
   }
-  return bestScore >= minOverlap ? best : null;
+  return best;
 }
 
 function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatchedName, unmatchedCode) {

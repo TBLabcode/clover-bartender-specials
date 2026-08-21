@@ -65,13 +65,26 @@ async function extractReceiptLines(imageBuffer, mimeType) {
                 'implies a metric size (e.g. "750 ML" -> 750, "1 LT" -> 1000, "250 ML" -> 250), else null.\n' +
                 '- "rawSize": whatever size text is printed, if sizeMl is null or as a backup reference.\n' +
                 '- "caseCount": if the invoice bills this line by the case/carton (look for a column ' +
-                'labeled like "Cs", "Cases", "Ctn"), the number of cases shipped — else null.\n' +
-                '- "unitsPerCase": if there\'s a bottles/units-per-case column (e.g. "BPC", "Pack", "Per ' +
-                'Cs"), that number — else null.\n' +
-                '- "count": the TOTAL number of individual bottles/cans/units received. If caseCount and ' +
-                'unitsPerCase are both known, this MUST equal caseCount * unitsPerCase — never just the ' +
-                'raw case number. If the invoice already states an individual unit/bottle quantity ' +
-                'directly, use that instead.\n\n' +
+                'labeled like "Cs", "Cases", "Ctn", "Qty"), the number of cases shipped — else null.\n' +
+                '- "unitsPerCase": the TRUE total number of individual bottles/cans in ONE case. Case ' +
+                'configuration is shown differently across distributors — check for all of these:\n' +
+                '  (a) A plain units-per-case column (e.g. "BPC", "Pack", "Per Cs") — use that number ' +
+                'directly.\n' +
+                '  (b) Embedded in the product name as "X/Y" (e.g. "2/12" or "3/8"): this means X sub-' +
+                'packs of Y units EACH per case, so unitsPerCase = X * Y (e.g. "2/12 12oz Bottle" = 2 ' +
+                'twelve-packs per case = 24 bottles per case, NOT 12). If there\'s also a separate column ' +
+                'showing total sub-packs shipped for the line (often labeled "Packs"), it should equal ' +
+                'caseCount * X — use it to confirm you\'ve identified X correctly.\n' +
+                '  (c) Embedded as "N/size Loose" or "N/size Lse" (e.g. "24/12 Lse Can"): here there is NO ' +
+                'sub-pack — the case just holds N individual loose units directly (24 loose 12oz cans per ' +
+                'case), so unitsPerCase = N, do not multiply further.\n' +
+                'Get this right — it is the single most error-prone field. Show your reasoning is correct ' +
+                'by making sure caseCount * unitsPerCase never contradicts a "Packs" or similar total-' +
+                'sub-packs column when one is printed.\n' +
+                '- "count": the TOTAL number of individual bottles/cans/units received = caseCount * ' +
+                'unitsPerCase whenever both are known — never just the raw case number or the raw sub-pack ' +
+                'number. If the invoice already states an individual unit/bottle quantity directly with no ' +
+                'case structure at all, use that instead and leave caseCount/unitsPerCase null.\n\n' +
                 'Respond with ONLY a JSON array, no other text, in this exact shape: ' +
                 '[{"name": "...", "displayName": "...", "code": "...", "sizeMl": 750, "rawSize": "", ' +
                 '"caseCount": null, "unitsPerCase": null, "count": 6}]',
