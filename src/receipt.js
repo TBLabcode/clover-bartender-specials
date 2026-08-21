@@ -49,7 +49,12 @@ async function extractReceiptLines(imageBuffer, mimeType) {
               text:
                 'This is a photo of a delivery or purchase receipt/invoice for a bar, likely from an ' +
                 'alcohol distributor. Extract every line item that represents alcohol or drink product ' +
-                '(including mixers, energy drinks, garnish syrups, etc.) received. Distributor invoices ' +
+                'received in bottles, cans, or other individually-countable units (including mixers, ' +
+                'energy drinks, garnish syrups, etc.). SKIP lines that don\'t fit that shape: draft/keg ' +
+                'beer billed by volume (e.g. "Beer 18.0000 Gallons" with no case or bottle count), keg ' +
+                'deposits, container/CO2 rentals, and other $0.00 or informational lines that aren\'t an ' +
+                'actual countable product received — this app only tracks bottle/can-style inventory, so ' +
+                'a line with no real unit count would just produce a broken, unfillable row. Distributor invoices ' +
                 'often use heavy abbreviations — for liquor: "F/C" = Finest Call, "VDKA" = Vodka, "RTU" = ' +
                 'Ready to Use, "LS" = Long Sleeve/Slim can; for beer: "MHL" = Miller High Life (NOT ' +
                 'Michelob), "MGD" = Miller Genuine Draft, "BL" = Bud Light, "PBR" = Pabst Blue Ribbon, ' +
