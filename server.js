@@ -23,11 +23,10 @@ const receipt = require('./src/receipt');
 const DRINKS_PER_750ML = 17;
 const DRINKS_PER_1L = 22;
 
-// Bumped whenever the SMS consent script changes what message types a
-// bartender is told they'll receive (see templates/sms-consent.html).
-// Bartenders below this version are gated to /consent until they
-// re-accept, rather than assuming old consent covers new message types.
-const SMS_CONSENT_VERSION = 2;
+// See src/sms.js for what this version number means and where it's enforced
+// on the sending side — this file's requireCurrentConsent uses the same
+// constant so a bartender can't get past login without re-accepting.
+const { SMS_CONSENT_VERSION } = sms;
 
 function normalizeItemName(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -335,6 +334,7 @@ app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         </p>
         <a href="/specials/new" class="menu-link">Pick Specials</a>
         <a href="/social/new" class="menu-link">Make a Social Post</a>
+        <a href="/shifts" class="menu-link">My Shifts</a>
       </div>
     </body>
     </html>
@@ -677,7 +677,7 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
         <div id="uploadView">
           <h1>Add inventory from a receipt</h1>
           <p class="subtitle">
-            Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a>
+            Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a> · <a href="/admin/schedule">Schedule</a>
           </p>
           ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
           <form method="POST" action="/inventory/new" enctype="multipart/form-data" id="receiptForm">
@@ -1114,7 +1114,7 @@ app.get('/admin/owners', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Owners</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/schedule">Schedule</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
         </p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
@@ -1201,7 +1201,7 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Bartenders</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/owners">Owners</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name} · <a href="/admin/owners">Owners</a> · <a href="/admin/schedule">Schedule</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
         </p>
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
@@ -1259,6 +1259,188 @@ app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
 app.post('/admin/bartenders/:id/delete', requireOwnerAuth, (req, res) => {
   db.removeBartender(req.params.id);
   res.redirect('/admin/bartenders');
+});
+
+const SHIFT_LABELS = { day: 'Day', night: 'Night', allDay: 'All day' };
+const DAY_LABELS = {
+  monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday',
+  friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+};
+
+// --- GET /admin/schedule — owner sets the recurring weekly roster ---
+app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
+  const schedule = db.getSchedule();
+  const bartenders = db.getBartenders();
+
+  const optionsHtml = (selectedId) =>
+    `<option value="">— unassigned —</option>` +
+    bartenders.map((b) => `<option value="${b.id}"${b.id === selectedId ? ' selected' : ''}>${b.name}</option>`).join('');
+
+  const rowsHtml = db.DAYS.map((day) => `
+    <div class="schedule-day">
+      <h2>${DAY_LABELS[day]}</h2>
+      ${db.SHIFT_TYPES.map((shiftType) => `
+        <label for="${day}-${shiftType}">${SHIFT_LABELS[shiftType]}</label>
+        <select id="${day}-${shiftType}" name="${day}-${shiftType}">
+          ${optionsHtml(schedule[day][shiftType])}
+        </select>
+      `).join('')}
+    </div>
+  `).join('');
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Weekly Schedule</title>
+      <link rel="stylesheet" href="/style.css" />
+      <style>
+        .schedule-day { padding: 14px 0; border-bottom: 1px solid #33383d; }
+        .schedule-day:first-child { padding-top: 0; }
+        .schedule-day h2 { font-size: 1.05rem; margin: 0 0 4px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h1>Weekly Schedule</h1>
+        <p class="subtitle">
+          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
+        </p>
+        <p class="subtitle">This repeats every week. Bartenders see only their own shifts and can request coverage from here.</p>
+        ${req.query.saved ? `<div class="subtitle" style="color: var(--accent);">Schedule saved.</div>` : ''}
+
+        <form method="POST" action="/admin/schedule">
+          ${rowsHtml}
+          <button type="submit">Save schedule</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /admin/schedule — save the whole grid at once ---
+app.post('/admin/schedule', requireOwnerAuth, (req, res) => {
+  for (const day of db.DAYS) {
+    for (const shiftType of db.SHIFT_TYPES) {
+      const bartenderId = req.body[`${day}-${shiftType}`] || null;
+      db.setScheduleSlot(day, shiftType, bartenderId);
+    }
+  }
+  res.redirect('/admin/schedule?saved=1');
+});
+
+// Returns the date of the next upcoming occurrence of dayName (today counts
+// as "upcoming" if it hasn't fully passed — simplest correct behavior for a
+// same-day request is to still treat today as the next occurrence).
+function nextOccurrenceOf(dayName) {
+  const targetIndex = db.DAYS.indexOf(dayName); // 0 = Monday
+  const now = new Date();
+  const todayIndex = (now.getDay() + 6) % 7; // convert Sunday=0 to Monday=0
+  let daysAhead = (targetIndex - todayIndex + 7) % 7;
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysAhead);
+  return date;
+}
+
+function formatDateLong(date) {
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+// --- GET /shifts — bartender's own upcoming shifts, with a way to give one away ---
+app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
+  const myShifts = db.getBartenderShifts(req.bartender.id);
+  const pendingByKey = new Set(
+    db.getCoverageRequests()
+      .filter((r) => r.bartenderId === req.bartender.id && r.status !== 'denied')
+      .map((r) => `${r.day}-${r.shiftType}`)
+  );
+
+  const rowsHtml = myShifts.length
+    ? myShifts.map(({ day, shiftType }) => {
+        const date = nextOccurrenceOf(day);
+        const alreadyRequested = pendingByKey.has(`${day}-${shiftType}`);
+        return `
+          <div class="bartender-row">
+            <div>
+              <strong>${DAY_LABELS[day]} · ${SHIFT_LABELS[shiftType]}</strong>
+              <div class="subtitle">${formatDateLong(date)}</div>
+            </div>
+            ${alreadyRequested
+              ? `<span class="subtitle">Coverage requested</span>`
+              : `<form method="POST" action="/shifts/cover">
+                  <input type="hidden" name="day" value="${day}" />
+                  <input type="hidden" name="shiftType" value="${shiftType}" />
+                  <button type="submit" class="danger">Get Shift Covered</button>
+                </form>`
+            }
+          </div>`;
+      }).join('')
+    : '<p class="subtitle">You have no shifts on the schedule yet — check with an owner.</p>';
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>My Shifts</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>My Shifts</h1>
+        <p class="subtitle">
+          Signed in as ${req.bartender.name} · <a href="/menu">Back to menu</a>
+        </p>
+        ${req.query.sent ? `<div class="subtitle" style="color: var(--accent);">Sent to the other bartenders.</div>` : ''}
+        <div class="bartender-list">${rowsHtml}</div>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /shifts/cover — bartender asks the other bartenders to take a shift ---
+app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (req, res) => {
+  const { day, shiftType } = req.body;
+  if (!db.DAYS.includes(day) || !db.SHIFT_TYPES.includes(shiftType)) {
+    return res.status(400).send('Invalid shift.');
+  }
+
+  const mine = db.getBartenderShifts(req.bartender.id).some((s) => s.day === day && s.shiftType === shiftType);
+  if (!mine) {
+    return res.status(403).send('That is not one of your shifts.');
+  }
+
+  const alreadyOpen = db.getCoverageRequests()
+    .some((r) => r.day === day && r.shiftType === shiftType && r.status !== 'denied');
+  if (alreadyOpen) {
+    return res.status(409).send('A coverage request for that shift is already pending.');
+  }
+
+  const date = nextOccurrenceOf(day);
+  const request = {
+    id: shortId(),
+    bartenderId: req.bartender.id,
+    bartenderName: req.bartender.name,
+    bartenderPhone: req.bartender.phone,
+    day,
+    shiftType,
+    dateLabel: formatDateLong(date),
+    status: 'open',
+    createdAt: Date.now(),
+  };
+  db.addCoverageRequest(request);
+
+  await sms.notifyBartendersShift(
+    `${req.bartender.name} wants to give up ${request.dateLabel} (${SHIFT_LABELS[shiftType]}) — would you like this shift? ` +
+    `Reply YES ${request.id} to take it.`,
+    [req.bartender.id]
+  );
+
+  res.redirect('/shifts?sent=1');
 });
 
 // --- POST /sms/incoming — Twilio webhook for approval replies ---
@@ -1337,6 +1519,81 @@ app.post('/sms/incoming', async (req, res) => {
     );
   }
 
+  res.send('<Response></Response>');
+});
+
+// --- POST /sms/shift-incoming — Twilio webhook for the shift-coverage number.
+// A bartender's "YES [code]" claims an open shift; an owner's "YES [code]"
+// approves a claimed one. Which behavior applies is decided purely by whose
+// phone number sent it, since both roles reply with the same word. ---
+app.post('/sms/shift-incoming', async (req, res) => {
+  const from = req.body.From;
+  const body = (req.body.Body || '').trim();
+
+  res.set('Content-Type', 'text/xml');
+
+  const match = body.match(/^YES\s+([a-zA-Z0-9]+)$/i) || body.match(/^YES$/i);
+  if (!match) {
+    return res.send('<Response><Message>Reply "YES [code]" to take or approve a shift.</Message></Response>');
+  }
+  const code = match[1];
+
+  const bartender = db.findBartenderByPhone(from);
+  const owner = db.findOwnerByPhone(from);
+
+  if (bartender) {
+    const open = db.getCoverageRequests().filter((r) => r.status === 'open');
+    const request = code
+      ? open.find((r) => r.id.toLowerCase() === code.toLowerCase())
+      : (open.length === 1 ? open[0] : undefined);
+
+    if (!request) {
+      return res.send('<Response><Message>No matching open shift found. Include the code, e.g. YES a1b2c3.</Message></Response>');
+    }
+    if (request.bartenderId === bartender.id) {
+      return res.send('<Response><Message>That\'s your own shift — you can\'t claim it yourself.</Message></Response>');
+    }
+
+    db.updateCoverageRequest(request.id, {
+      status: 'claimed',
+      claimedByBartenderId: bartender.id,
+      claimedByName: bartender.name,
+      claimedByPhone: bartender.phone,
+    });
+
+    await sms.notifyOwnersShift(
+      `${bartender.name} wants to take ${request.bartenderName}'s ${request.dateLabel} (${SHIFT_LABELS[request.shiftType]}) shift. Reply YES ${request.id} to approve.`
+    );
+
+    return res.send('<Response><Message>Got it — waiting on an owner to approve.</Message></Response>');
+  }
+
+  if (owner) {
+    const claimed = db.getCoverageRequests().filter((r) => r.status === 'claimed');
+    const request = code
+      ? claimed.find((r) => r.id.toLowerCase() === code.toLowerCase())
+      : (claimed.length === 1 ? claimed[0] : undefined);
+
+    if (!request) {
+      return res.send('<Response><Message>No matching claimed shift found. Include the code, e.g. YES a1b2c3.</Message></Response>');
+    }
+
+    db.removeCoverageRequest(request.id);
+
+    const settledMessage = `${request.dateLabel} (${SHIFT_LABELS[request.shiftType]}) is now covered by ${request.claimedByName}, approved by an owner.`;
+    await sms.notifyBartendersShift(settledMessage, [request.bartenderId, request.claimedByBartenderId]);
+    if (request.bartenderPhone) await sms.sendShiftText(request.bartenderPhone, settledMessage);
+    if (request.claimedByPhone) {
+      await sms.sendShiftText(
+        request.claimedByPhone,
+        `You're confirmed for ${request.dateLabel} (${SHIFT_LABELS[request.shiftType]}) — approved by an owner.`
+      );
+    }
+
+    return res.send('<Response></Response>');
+  }
+
+  // Unrecognized number — ignore silently.
   res.send('<Response></Response>');
 });
 

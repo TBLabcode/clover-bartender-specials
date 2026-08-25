@@ -7,6 +7,15 @@ const path = require('path');
 
 const DB_PATH = path.join(__dirname, '..', 'data', 'db.json');
 
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const SHIFT_TYPES = ['day', 'night', 'allDay'];
+
+function emptySchedule() {
+  const schedule = {};
+  for (const day of DAYS) schedule[day] = { day: null, night: null, allDay: null };
+  return schedule;
+}
+
 // Strips formatting and a leading "1" country code so "+19105551234",
 // "9105551234", and "(910) 555-1234" all match the same person.
 function normalizePhone(phone) {
@@ -23,6 +32,8 @@ function readDb() {
       sessions: [],
       owners: [],
       ownerSessions: [],
+      schedule: emptySchedule(),
+      coverageRequests: [],
     };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
@@ -31,6 +42,8 @@ function readDb() {
   if (!data.sessions) data.sessions = [];
   if (!data.owners) data.owners = [];
   if (!data.ownerSessions) data.ownerSessions = [];
+  if (!data.schedule) data.schedule = emptySchedule();
+  if (!data.coverageRequests) data.coverageRequests = [];
   return data;
 }
 
@@ -174,7 +187,70 @@ function removeOwnerSession(token) {
   writeDb(data);
 }
 
+// --- Weekly recurring schedule: one bartender (or none) per day/shift-type slot ---
+
+function getSchedule() {
+  return readDb().schedule;
+}
+
+function setScheduleSlot(day, shiftType, bartenderId) {
+  const data = readDb();
+  data.schedule[day][shiftType] = bartenderId || null;
+  writeDb(data);
+  return data.schedule;
+}
+
+// Every day/shift-type slot this bartender is currently assigned to.
+function getBartenderShifts(bartenderId) {
+  const schedule = getSchedule();
+  const shifts = [];
+  for (const day of DAYS) {
+    for (const shiftType of SHIFT_TYPES) {
+      if (schedule[day][shiftType] === bartenderId) shifts.push({ day, shiftType });
+    }
+  }
+  return shifts;
+}
+
+// --- Shift-coverage requests: a bartender giving away one of their own
+// scheduled shifts, another bartender claiming it, then an owner approving ---
+
+function addCoverageRequest(request) {
+  const data = readDb();
+  data.coverageRequests.push(request);
+  writeDb(data);
+  return request;
+}
+
+function getCoverageRequests() {
+  return readDb().coverageRequests;
+}
+
+function findCoverageRequest(id) {
+  return readDb().coverageRequests.find((r) => r.id === id) || null;
+}
+
+function updateCoverageRequest(id, updates) {
+  const data = readDb();
+  const request = data.coverageRequests.find((r) => r.id === id);
+  if (!request) return null;
+  Object.assign(request, updates);
+  writeDb(data);
+  return request;
+}
+
+function removeCoverageRequest(id) {
+  const data = readDb();
+  const idx = data.coverageRequests.findIndex((r) => r.id === id);
+  if (idx === -1) return null;
+  const [removed] = data.coverageRequests.splice(idx, 1);
+  writeDb(data);
+  return removed;
+}
+
 module.exports = {
+  DAYS,
+  SHIFT_TYPES,
   normalizePhone,
   addPendingRequest,
   getPendingRequests,
@@ -197,4 +273,12 @@ module.exports = {
   addOwnerSession,
   findOwnerSessionByToken,
   removeOwnerSession,
+  getSchedule,
+  setScheduleSlot,
+  getBartenderShifts,
+  addCoverageRequest,
+  getCoverageRequests,
+  findCoverageRequest,
+  updateCoverageRequest,
+  removeCoverageRequest,
 };

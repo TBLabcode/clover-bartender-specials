@@ -3,6 +3,13 @@ const db = require('./db');
 
 const DRY_RUN = process.env.TWILIO_DRY_RUN === 'true';
 
+// Bumped whenever the SMS consent script changes what message types a
+// bartender is told they'll receive (see templates/sms-consent.html).
+// Bartenders below this version must not be sent shift-coverage texts —
+// server.js's requireCurrentConsent gate uses the same constant so a
+// bartender can't even get past login until they've re-accepted.
+const SMS_CONSENT_VERSION = 2;
+
 // Skip constructing the real client in dry-run mode — avoids validating
 // Twilio credentials that may not be filled in yet.
 const client = DRY_RUN ? null : twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -69,13 +76,32 @@ async function notifyOwners(body) {
   return results;
 }
 
+// Send the same text to every registered owner from the shift-coverage
+// number — used for "a bartender claimed a shift, please approve" and the
+// final confirmation once approved. Distinct from notifyOwners, which sends
+// from the specials-approval number for a different message type.
+async function notifyOwnersShift(body) {
+  const ownerNumbers = db.getOwners().map((o) => `+1${o.phone}`);
+  const results = await Promise.allSettled(ownerNumbers.map((num) => sendShiftText(num, body)));
+
+  const failures = results.filter((r) => r.status === 'rejected');
+  if (failures.length > 0) {
+    failures.forEach((f) => console.error('Failed to text an owner about a shift:', f.reason.message));
+  }
+
+  return results;
+}
+
 // Send a shift-coverage text (open shift, or a claim confirmation) to every
-// registered bartender, from the shift-coverage number — not the specials-
-// approval number notifyApprovers/notifyOwners use. Only bartenders who
-// opted into shift-coverage texts (smsConsentVersion current) should be
-// passed in once that gate exists on this flow's own callers.
-async function notifyBartendersShift(body) {
-  const bartenderNumbers = db.getBartenders().map((b) => `+1${b.phone}`);
+// registered bartender who has accepted the current consent version, from
+// the shift-coverage number — not the specials-approval number
+// notifyApprovers/notifyOwners use. Pass excludeBartenderIds to skip
+// bartenders who are getting their own personalized text instead (e.g. the
+// one giving up the shift, or the one who just claimed it).
+async function notifyBartendersShift(body, excludeBartenderIds = []) {
+  const bartenderNumbers = db.getBartenders()
+    .filter((b) => !excludeBartenderIds.includes(b.id) && (b.smsConsentVersion || 0) >= SMS_CONSENT_VERSION)
+    .map((b) => `+1${b.phone}`);
   const results = await Promise.allSettled(bartenderNumbers.map((num) => sendShiftText(num, body)));
 
   const failures = results.filter((r) => r.status === 'rejected');
@@ -91,6 +117,8 @@ module.exports = {
   sendShiftText,
   notifyApprovers,
   notifyOwners,
+  notifyOwnersShift,
   notifyBartendersShift,
   approverNumbers,
+  SMS_CONSENT_VERSION,
 };
