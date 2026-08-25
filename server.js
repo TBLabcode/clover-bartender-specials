@@ -163,8 +163,8 @@ function dollarsToCents(dollarsStr) {
 // this list on purpose (see ownerSubtitleHtml below) since it's used rarely
 // enough that it doesn't need a full-width button.
 const OWNER_NAV_LINKS = [
-  { key: 'bartenders', href: '/admin/bartenders', label: 'Bartenders' },
   { key: 'inventory', href: '/inventory/new', label: 'Inventory' },
+  { key: 'bartenders', href: '/admin/bartenders', label: 'Bartenders' },
   { key: 'schedule', href: '/admin/schedule', label: 'Schedule' },
 ];
 
