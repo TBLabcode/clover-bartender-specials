@@ -1261,7 +1261,17 @@ app.post('/admin/bartenders/:id/delete', requireOwnerAuth, (req, res) => {
   res.redirect('/admin/bartenders');
 });
 
-const SHIFT_LABELS = { day: 'Day', night: 'Night', allDay: 'All day' };
+const SHIFT_LABELS = { day: 'Day', night: 'Night', allDay: 'All day', both: 'Day + Night' };
+
+// A coverage request's shiftType is normally a real schedule slot type
+// ('day'/'night'/'allDay'), but 'both' is a request-only value meaning "the
+// day and night shifts together, as one give-away" for a bartender who is
+// scheduled for both individually. This returns which slot(s) it actually
+// covers, so two requests that overlap (e.g. a lone 'day' request and a
+// 'both' request) can be treated as conflicting.
+function slotsCoveredBy(shiftType) {
+  return shiftType === 'both' ? ['day', 'night'] : [shiftType];
+}
 const DAY_LABELS = {
   monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday',
   friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
@@ -1351,30 +1361,52 @@ function formatDateLong(date) {
 // --- GET /shifts — bartender's own upcoming shifts, with a way to give one away ---
 app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
   const myShifts = db.getBartenderShifts(req.bartender.id);
-  const pendingByKey = new Set(
-    db.getCoverageRequests()
-      .filter((r) => r.bartenderId === req.bartender.id && r.status !== 'denied')
-      .map((r) => `${r.day}-${r.shiftType}`)
-  );
+  const myRequests = db.getCoverageRequests().filter((r) => r.bartenderId === req.bartender.id && r.status !== 'denied');
+  // A day's slot is already spoken for if any of my non-denied requests covers it —
+  // whether that request is itself the exact slot or a 'both' request spanning it.
+  const requestedSlots = new Set();
+  for (const r of myRequests) {
+    for (const slot of slotsCoveredBy(r.shiftType)) requestedSlots.add(`${r.day}-${slot}`);
+  }
 
-  const rowsHtml = myShifts.length
-    ? myShifts.map(({ day, shiftType }) => {
+  const shiftTypeButton = (day, shiftType, label) => {
+    const blocked = slotsCoveredBy(shiftType).some((slot) => requestedSlots.has(`${day}-${slot}`));
+    if (blocked) return '';
+    return `
+      <form method="POST" action="/shifts/cover">
+        <input type="hidden" name="day" value="${day}" />
+        <input type="hidden" name="shiftType" value="${shiftType}" />
+        <button type="submit" class="danger">Give up ${label}</button>
+      </form>`;
+  };
+
+  // Group by day so a bartender working both Day and Night the same day can
+  // give up either one, or both together as a single "Day + Night" request.
+  const byDay = {};
+  for (const { day, shiftType } of myShifts) {
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(shiftType);
+  }
+
+  const rowsHtml = Object.keys(byDay).length
+    ? db.DAYS.filter((day) => byDay[day]).map((day) => {
+        const shiftTypes = byDay[day];
         const date = nextOccurrenceOf(day);
-        const alreadyRequested = pendingByKey.has(`${day}-${shiftType}`);
+        const hasBoth = shiftTypes.includes('day') && shiftTypes.includes('night');
+
+        const buttons = shiftTypes.map((st) => shiftTypeButton(day, st, SHIFT_LABELS[st])).filter(Boolean);
+        if (hasBoth) buttons.push(shiftTypeButton(day, 'both', SHIFT_LABELS.both));
+        const anyPending = shiftTypes.some((st) => requestedSlots.has(`${day}-${st}`));
+
         return `
           <div class="bartender-row">
             <div>
-              <strong>${DAY_LABELS[day]} · ${SHIFT_LABELS[shiftType]}</strong>
+              <strong>${DAY_LABELS[day]} · ${shiftTypes.map((st) => SHIFT_LABELS[st]).join(' + ')}</strong>
               <div class="subtitle">${formatDateLong(date)}</div>
             </div>
-            ${alreadyRequested
-              ? `<span class="subtitle">Coverage requested</span>`
-              : `<form method="POST" action="/shifts/cover">
-                  <input type="hidden" name="day" value="${day}" />
-                  <input type="hidden" name="shiftType" value="${shiftType}" />
-                  <button type="submit" class="danger">Get Shift Covered</button>
-                </form>`
-            }
+            <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
+              ${buttons.join('') || (anyPending ? '<span class="subtitle">Coverage requested</span>' : '')}
+            </div>
           </div>`;
       }).join('')
     : '<p class="subtitle">You have no shifts on the schedule yet — check with an owner.</p>';
@@ -1405,19 +1437,25 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
 // --- POST /shifts/cover — bartender asks the other bartenders to take a shift ---
 app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (req, res) => {
   const { day, shiftType } = req.body;
-  if (!db.DAYS.includes(day) || !db.SHIFT_TYPES.includes(shiftType)) {
+  const validShiftType = db.SHIFT_TYPES.includes(shiftType) || shiftType === 'both';
+  if (!db.DAYS.includes(day) || !validShiftType) {
     return res.status(400).send('Invalid shift.');
   }
 
-  const mine = db.getBartenderShifts(req.bartender.id).some((s) => s.day === day && s.shiftType === shiftType);
+  const myShiftTypesThatDay = db.getBartenderShifts(req.bartender.id)
+    .filter((s) => s.day === day)
+    .map((s) => s.shiftType);
+  const requestedSlots = slotsCoveredBy(shiftType);
+  const mine = requestedSlots.every((slot) => myShiftTypesThatDay.includes(slot));
   if (!mine) {
     return res.status(403).send('That is not one of your shifts.');
   }
 
   const alreadyOpen = db.getCoverageRequests()
-    .some((r) => r.day === day && r.shiftType === shiftType && r.status !== 'denied');
+    .filter((r) => r.day === day && r.status !== 'denied')
+    .some((r) => slotsCoveredBy(r.shiftType).some((slot) => requestedSlots.includes(slot)));
   if (alreadyOpen) {
-    return res.status(409).send('A coverage request for that shift is already pending.');
+    return res.status(409).send('A coverage request overlapping that shift is already pending.');
   }
 
   const date = nextOccurrenceOf(day);
