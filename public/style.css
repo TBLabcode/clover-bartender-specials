@@ -105,8 +105,14 @@ button, .menu-link {
   color: var(--accent-text);
 }
 
-button:active {
-  opacity: 0.85;
+button:active, .menu-link:active {
+  background: var(--error);
+  color: #fff;
+}
+
+.menu-link.current, .menu-link.current:visited {
+  background: var(--error);
+  color: #fff;
 }
 
 .confirmation {

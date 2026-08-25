@@ -155,6 +155,26 @@ function dollarsToCents(dollarsStr) {
   return Math.round(parseFloat(dollarsStr) * 100);
 }
 
+// Big button-style nav for owner-facing admin pages, matching the size/look
+// of a page's own submit button (e.g. "Add bartender") rather than small
+// inline text links. The current page's own link stays in the list (rather
+// than being omitted) so it can be highlighted red as a "you are here"
+// indicator — see .menu-link.current in style.css.
+const OWNER_NAV_LINKS = [
+  { key: 'bartenders', href: '/admin/bartenders', label: 'Bartenders' },
+  { key: 'inventory', href: '/inventory/new', label: 'Inventory' },
+  { key: 'schedule', href: '/admin/schedule', label: 'Schedule' },
+  { key: 'owners', href: '/admin/owners', label: 'Owners' },
+];
+
+function ownerNavHtml(currentPage) {
+  const buttons = OWNER_NAV_LINKS.map((l) => {
+    const cls = l.key === currentPage ? 'menu-link current' : 'menu-link';
+    return `<a href="${l.href}" class="${cls}">${l.label}</a>`;
+  }).join('');
+  return `${buttons}<a href="/admin/logout" class="menu-link">Sign out</a>`;
+}
+
 // --- Auth middleware ---
 
 function requireBartenderAuth(req, res, next) {
@@ -677,8 +697,9 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
         <div id="uploadView">
           <h1>Add inventory from a receipt</h1>
           <p class="subtitle">
-            Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a> · <a href="/admin/schedule">Schedule</a>
+            Signed in as ${req.owner.name}
           </p>
+          ${ownerNavHtml('inventory')}
           ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
           <form method="POST" action="/inventory/new" enctype="multipart/form-data" id="receiptForm">
             <label for="receipt">Receipt photo</label>
@@ -1114,8 +1135,9 @@ app.get('/admin/owners', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Owners</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/schedule">Schedule</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name}
         </p>
+        ${ownerNavHtml('owners')}
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
         <ul class="bartender-list">${rows || '<li class="subtitle">No owners added yet.</li>'}</ul>
@@ -1201,8 +1223,9 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Bartenders</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/owners">Owners</a> · <a href="/admin/schedule">Schedule</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name}
         </p>
+        ${ownerNavHtml('bartenders')}
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
         <ul class="bartender-list">${rows || '<li class="subtitle">No bartenders added yet.</li>'}</ul>
@@ -1316,8 +1339,9 @@ app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
       <div class="card">
         <h1>Weekly Schedule</h1>
         <p class="subtitle">
-          Signed in as ${req.owner.name} · <a href="/admin/bartenders">Bartenders</a> · <a href="/admin/owners">Owners</a> · <a href="/inventory/new">Inventory</a> · <a href="/admin/logout">Sign out</a>
+          Signed in as ${req.owner.name}
         </p>
+        ${ownerNavHtml('schedule')}
         <p class="subtitle">This repeats every week. Bartenders see only their own shifts and can request coverage from here.</p>
         ${req.query.saved ? `<div class="subtitle" style="color: var(--accent);">Schedule saved.</div>` : ''}
 
