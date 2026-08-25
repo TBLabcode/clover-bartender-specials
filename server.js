@@ -159,12 +159,13 @@ function dollarsToCents(dollarsStr) {
 // of a page's own submit button (e.g. "Add bartender") rather than small
 // inline text links. The current page's own link stays in the list (rather
 // than being omitted) so it can be highlighted red as a "you are here"
-// indicator — see .menu-link.current in style.css.
+// indicator — see .menu-link.current in style.css. Owners is left out of
+// this list on purpose (see ownerSubtitleHtml below) since it's used rarely
+// enough that it doesn't need a full-width button.
 const OWNER_NAV_LINKS = [
   { key: 'bartenders', href: '/admin/bartenders', label: 'Bartenders' },
   { key: 'inventory', href: '/inventory/new', label: 'Inventory' },
   { key: 'schedule', href: '/admin/schedule', label: 'Schedule' },
-  { key: 'owners', href: '/admin/owners', label: 'Owners' },
 ];
 
 function ownerNavHtml(currentPage) {
@@ -173,6 +174,13 @@ function ownerNavHtml(currentPage) {
     return `<a href="${l.href}" class="${cls}">${l.label}</a>`;
   }).join('');
   return `${buttons}<a href="/admin/logout" class="menu-link">Sign out</a>`;
+}
+
+// Owners stays a small inline link next to "Signed in as", like the nav
+// looked before the big-button redesign, rather than a full-width button.
+function ownerSubtitleHtml(ownerName, currentPage) {
+  const ownersLink = currentPage === 'owners' ? '' : ' · <a href="/admin/owners">Owners</a>';
+  return `Signed in as ${ownerName}${ownersLink}`;
 }
 
 // --- Auth middleware ---
@@ -696,9 +704,7 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
       <div class="card">
         <div id="uploadView">
           <h1>Add inventory from a receipt</h1>
-          <p class="subtitle">
-            Signed in as ${req.owner.name}
-          </p>
+          <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'inventory')}</p>
           ${ownerNavHtml('inventory')}
           ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
           <form method="POST" action="/inventory/new" enctype="multipart/form-data" id="receiptForm">
@@ -1134,9 +1140,7 @@ app.get('/admin/owners', requireOwnerAuth, (req, res) => {
     <body>
       <div class="card">
         <h1>Owners</h1>
-        <p class="subtitle">
-          Signed in as ${req.owner.name}
-        </p>
+        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'owners')}</p>
         ${ownerNavHtml('owners')}
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
@@ -1222,9 +1226,7 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
     <body>
       <div class="card">
         <h1>Bartenders</h1>
-        <p class="subtitle">
-          Signed in as ${req.owner.name}
-        </p>
+        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'bartenders')}</p>
         ${ownerNavHtml('bartenders')}
         ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
 
@@ -1338,9 +1340,7 @@ app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
     <body>
       <div class="card">
         <h1>Weekly Schedule</h1>
-        <p class="subtitle">
-          Signed in as ${req.owner.name}
-        </p>
+        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'schedule')}</p>
         ${ownerNavHtml('schedule')}
         <p class="subtitle">This repeats every week. Bartenders see only their own shifts and can request coverage from here.</p>
         ${req.query.saved ? `<div class="subtitle" style="color: var(--accent);">Schedule saved.</div>` : ''}
