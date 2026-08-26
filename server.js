@@ -131,15 +131,17 @@ function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatc
 }
 
 const app = express();
-// Render terminates TLS one hop in front of the app, so without this
-// req.protocol would report 'http' even on the real https:// site — which
-// would break Twilio's webhook signature check below (it signs against the
-// actual public https URL) and mislabel uploaded photo URLs as http://.
-// Trusting exactly 1 hop (not `true`, which trusts an unlimited chain) is
-// what actually matters here: `true` lets a client spoof its own
-// X-Forwarded-For to fake a different IP on every request, defeating the
-// rate limiter below.
-app.set('trust proxy', 1);
+// Render actually sits behind TWO proxy hops in front of the app — Cloudflare,
+// then Render's own edge — confirmed by logging a real request's
+// X-Forwarded-For in production: "<real client IP>, <Cloudflare edge IP>".
+// Without trusting proxies at all, req.protocol would report 'http' even on
+// the real https:// site (breaking the Twilio signature check below, which
+// signs against the actual public https URL) and mislabel uploaded photo
+// URLs as http://. Trusting exactly 2 hops (not `true`, which trusts an
+// unlimited chain and lets a client spoof its own IP to dodge the rate
+// limiter below) resolves req.ip to the real, stable client IP rather than
+// Cloudflare's own edge node, which changes on every request.
+app.set('trust proxy', 2);
 app.use(express.urlencoded({ extended: false })); // form submissions + Twilio webhook
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -172,12 +174,6 @@ function verifyTwilioRequest(req, res, next) {
 function rateLimitHandler(req, res) {
   res.redirect(`${req.path}?error=${encodeURIComponent('Too many attempts. Please wait a few minutes and try again.')}`);
 }
-// TEMPORARY — diagnosing why the rate limiter isn't accumulating hits on
-// Render; remove once the cause is confirmed.
-app.use('/admin/master-login', (req, res, next) => {
-  console.log('DEBUG req.ip:', req.ip, '| x-forwarded-for:', req.headers['x-forwarded-for']);
-  next();
-});
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
