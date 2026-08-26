@@ -391,7 +391,6 @@ app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         <a href="/specials/new" class="menu-link">Pick Specials</a>
         <a href="/social/new" class="menu-link">Make a Social Post</a>
         <a href="/shifts" class="menu-link">My Shifts</a>
-        <a href="/calendar" class="menu-link">Calendar</a>
       </div>
     </body>
     </html>
@@ -1415,19 +1414,55 @@ function nextOccurrenceOf(dayName) {
   return date;
 }
 
+// The recurring schedule is a fixed weekly pattern, so a bartender's Monday
+// shift is really "every Monday" — this returns the next `count` real
+// calendar dates that land on dayName, one week apart, so bartenders/owners
+// can look (and give up a shift) further out than just the next occurrence.
+const SHIFT_LOOKAHEAD_WEEKS = 52; // "on the calendar for the year"
+function occurrencesOf(dayName, count) {
+  const first = nextOccurrenceOf(dayName);
+  const dates = [];
+  for (let i = 0; i < count; i++) {
+    dates.push(new Date(first.getFullYear(), first.getMonth(), first.getDate() + i * 7));
+  }
+  return dates;
+}
+
 function formatDateLong(date) {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+// Local (not UTC) yyyy-mm-dd key, used as the <option> value in date
+// dropdowns and stored on a coverage request to identify the exact
+// occurrence being given up — distinct from `day`, which only names the
+// recurring weekday.
+function dateKeyOf(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function parseDateKey(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
 }
 
 // Full weekly roster, read-only — who's working each day/shift, for the
 // "Calendar" view both bartenders and owners can see (as opposed to
 // /admin/schedule's editable dropdowns, or /shifts' bartender-only view).
-function calendarBodyHtml() {
+// Shown chronologically (not grouped by weekday name) since a bartender
+// looking several weeks or months out wants an actual calendar order.
+function calendarBodyHtml(weeks) {
   const schedule = db.getSchedule();
   const nameById = new Map(db.getBartenders().map((b) => [b.id, b.name]));
 
-  return db.DAYS.map((day) => {
-    const date = nextOccurrenceOf(day);
+  const entries = [];
+  for (const day of db.DAYS) {
+    for (const date of occurrencesOf(day, weeks)) entries.push({ day, date });
+  }
+  entries.sort((a, b) => a.date - b.date);
+
+  return entries.map(({ day, date }) => {
     const rows = db.SHIFT_TYPES.map((shiftType) => {
       const bartenderId = schedule[day][shiftType];
       const name = bartenderId ? (nameById.get(bartenderId) || 'Unknown') : '— unassigned —';
@@ -1441,8 +1476,20 @@ function calendarBodyHtml() {
   }).join('');
 }
 
+// Shown by default; a link on the page expands it to the full year, since
+// listing 52 weeks x 7 days up front would be a very long page to load and
+// scroll through for what's usually a same-every-week roster.
+const CALENDAR_DEFAULT_WEEKS = 8;
+
+function calendarWeeksToggleHtml(weeks, baseHref) {
+  return weeks >= SHIFT_LOOKAHEAD_WEEKS
+    ? `<p class="subtitle"><a href="${baseHref}">Show fewer weeks</a></p>`
+    : `<p class="subtitle"><a href="${baseHref}?weeks=${SHIFT_LOOKAHEAD_WEEKS}">Show the full year</a></p>`;
+}
+
 // --- GET /calendar — bartender-facing read-only view of the full roster ---
 app.get('/calendar', requireBartenderAuth, requireCurrentConsent, (req, res) => {
+  const weeks = req.query.weeks === String(SHIFT_LOOKAHEAD_WEEKS) ? SHIFT_LOOKAHEAD_WEEKS : CALENDAR_DEFAULT_WEEKS;
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -1458,7 +1505,8 @@ app.get('/calendar', requireBartenderAuth, requireCurrentConsent, (req, res) => 
         <p class="subtitle">
           Signed in as ${req.bartender.name} · <a href="/menu">Back to menu</a>
         </p>
-        ${calendarBodyHtml()}
+        ${calendarWeeksToggleHtml(weeks, '/calendar')}
+        ${calendarBodyHtml(weeks)}
       </div>
     </body>
     </html>
@@ -1467,6 +1515,7 @@ app.get('/calendar', requireBartenderAuth, requireCurrentConsent, (req, res) => 
 
 // --- GET /admin/calendar — owner-facing read-only view of the full roster ---
 app.get('/admin/calendar', requireOwnerAuth, (req, res) => {
+  const weeks = req.query.weeks === String(SHIFT_LOOKAHEAD_WEEKS) ? SHIFT_LOOKAHEAD_WEEKS : CALENDAR_DEFAULT_WEEKS;
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -1481,7 +1530,8 @@ app.get('/admin/calendar', requireOwnerAuth, (req, res) => {
         <h1>Calendar</h1>
         <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'calendar')}</p>
         ${ownerNavHtml()}
-        ${calendarBodyHtml()}
+        ${calendarWeeksToggleHtml(weeks, '/admin/calendar')}
+        ${calendarBodyHtml(weeks)}
       </div>
     </body>
     </html>
@@ -1491,24 +1541,18 @@ app.get('/admin/calendar', requireOwnerAuth, (req, res) => {
 // --- GET /shifts — bartender's own upcoming shifts, with a way to give one away ---
 app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
   const myShifts = db.getBartenderShifts(req.bartender.id);
-  const myRequests = db.getCoverageRequests().filter((r) => r.bartenderId === req.bartender.id && r.status !== 'denied');
-  // A day's slot is already spoken for if any of my non-denied requests covers it —
-  // whether that request is itself the exact slot or a 'both' request spanning it.
-  const requestedSlots = new Set();
-  for (const r of myRequests) {
-    for (const slot of slotsCoveredBy(r.shiftType)) requestedSlots.add(`${r.day}-${slot}`);
-  }
+  const myOpenRequests = db.getCoverageRequests().filter((r) => r.bartenderId === req.bartender.id && r.status !== 'denied');
 
-  const shiftTypeButton = (day, shiftType, label) => {
-    const blocked = slotsCoveredBy(shiftType).some((slot) => requestedSlots.has(`${day}-${slot}`));
-    if (blocked) return '';
-    return `
-      <form method="POST" action="/shifts/cover">
-        <input type="hidden" name="day" value="${day}" />
-        <input type="hidden" name="shiftType" value="${shiftType}" />
-        <button type="submit" class="danger">Give up ${label}</button>
-      </form>`;
-  };
+  const pendingHtml = myOpenRequests.length
+    ? `<div class="subtitle" style="margin-bottom: 20px;">
+        <strong>Pending requests:</strong><br/>
+        ${myOpenRequests.map((r) =>
+          `${r.dateLabel} (${SHIFT_LABELS[r.shiftType]}) — ${
+            r.status === 'claimed' ? `claimed by ${r.claimedByName}, waiting on an owner` : 'waiting for someone to claim it'
+          }`
+        ).join('<br/>')}
+      </div>`
+    : '';
 
   // Group by day so a bartender working both Day and Night the same day can
   // give up either one, or both together as a single "Day + Night" request.
@@ -1521,7 +1565,6 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
   const rowsHtml = Object.keys(byDay).length
     ? db.DAYS.filter((day) => byDay[day]).map((day) => {
         const shiftTypes = byDay[day];
-        const date = nextOccurrenceOf(day);
         const hasAllDay = shiftTypes.includes('allDay');
         const hasBoth = shiftTypes.includes('day') && shiftTypes.includes('night');
         // A lone 'allDay' shift can be given up as just its day half, just
@@ -1531,22 +1574,26 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         const offerNight = shiftTypes.includes('night') || hasAllDay;
 
         const buttons = [];
-        if (offerDay) buttons.push(shiftTypeButton(day, 'day', SHIFT_LABELS.day));
-        if (offerNight) buttons.push(shiftTypeButton(day, 'night', SHIFT_LABELS.night));
-        if (hasBoth) buttons.push(shiftTypeButton(day, 'both', SHIFT_LABELS.both));
-        if (hasAllDay) buttons.push(shiftTypeButton(day, 'allDay', SHIFT_LABELS.allDay));
-        const visibleButtons = buttons.filter(Boolean);
-        const anyPending = [...coveredSlots(shiftTypes)].some((slot) => requestedSlots.has(`${day}-${slot}`));
+        if (offerDay) buttons.push(`<button type="submit" name="shiftType" value="day" class="danger">Give up Day</button>`);
+        if (offerNight) buttons.push(`<button type="submit" name="shiftType" value="night" class="danger">Give up Night</button>`);
+        if (hasBoth) buttons.push(`<button type="submit" name="shiftType" value="both" class="danger">Give up Day + Night</button>`);
+        if (hasAllDay) buttons.push(`<button type="submit" name="shiftType" value="allDay" class="danger">Give up All day</button>`);
+
+        const dateOptionsHtml = occurrencesOf(day, SHIFT_LOOKAHEAD_WEEKS)
+          .map((d) => `<option value="${dateKeyOf(d)}">${formatDateLong(d)}</option>`)
+          .join('');
 
         return `
-          <div class="bartender-row">
-            <div>
-              <strong>${DAY_LABELS[day]} · ${shiftTypes.map((st) => SHIFT_LABELS[st]).join(' + ')}</strong>
-              <div class="subtitle">${formatDateLong(date)}</div>
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
-              ${visibleButtons.join('') || (anyPending ? '<span class="subtitle">Coverage requested</span>' : '')}
-            </div>
+          <div class="bartender-row" style="flex-direction: column; align-items: stretch; gap: 10px;">
+            <strong>${DAY_LABELS[day]} · ${shiftTypes.map((st) => SHIFT_LABELS[st]).join(' + ')}</strong>
+            <form method="POST" action="/shifts/cover">
+              <input type="hidden" name="day" value="${day}" />
+              <label for="date-${day}">Which date?</label>
+              <select id="date-${day}" name="date">${dateOptionsHtml}</select>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">
+                ${buttons.join('')}
+              </div>
+            </form>
           </div>`;
       }).join('')
     : '<p class="subtitle">You have no shifts on the schedule yet — check with an owner.</p>';
@@ -1564,9 +1611,11 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
       <div class="card">
         <h1>My Shifts</h1>
         <p class="subtitle">
-          Signed in as ${req.bartender.name} · <a href="/menu">Back to menu</a>
+          Signed in as ${req.bartender.name} · <a href="/calendar">Calendar</a> · <a href="/menu">Back to menu</a>
         </p>
         ${req.query.sent ? `<div class="subtitle" style="color: var(--accent);">Sent to the other bartenders.</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${pendingHtml}
         <div class="bartender-list">${rowsHtml}</div>
       </div>
     </body>
@@ -1576,10 +1625,18 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
 
 // --- POST /shifts/cover — bartender asks the other bartenders to take a shift ---
 app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (req, res) => {
-  const { day, shiftType } = req.body;
+  const { day, shiftType, date } = req.body;
   const validShiftType = db.SHIFT_TYPES.includes(shiftType) || shiftType === 'both';
   if (!db.DAYS.includes(day) || !validShiftType) {
-    return res.status(400).send('Invalid shift.');
+    return res.redirect('/shifts?error=' + encodeURIComponent('Invalid shift.'));
+  }
+
+  // Confirm the submitted date is actually a real upcoming occurrence of
+  // that weekday, rather than trusting the client — defends against a
+  // tampered form value pointing at some unrelated date.
+  const validDates = new Set(occurrencesOf(day, SHIFT_LOOKAHEAD_WEEKS).map(dateKeyOf));
+  if (!validDates.has(date)) {
+    return res.redirect('/shifts?error=' + encodeURIComponent('Pick a valid upcoming date.'));
   }
 
   const myShiftTypesThatDay = db.getBartenderShifts(req.bartender.id)
@@ -1589,25 +1646,27 @@ app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (re
   const myCoveredSlots = coveredSlots(myShiftTypesThatDay);
   const mine = requestedSlots.every((slot) => myCoveredSlots.has(slot));
   if (!mine) {
-    return res.status(403).send('That is not one of your shifts.');
+    return res.redirect('/shifts?error=' + encodeURIComponent('That is not one of your shifts.'));
   }
 
+  // Conflicts are checked against this specific date, not just the weekday —
+  // giving up "Monday" three weeks out doesn't touch next Monday's slot.
   const alreadyOpen = db.getCoverageRequests()
-    .filter((r) => r.day === day && r.status !== 'denied')
+    .filter((r) => r.date === date && r.status !== 'denied')
     .some((r) => slotsCoveredBy(r.shiftType).some((slot) => requestedSlots.includes(slot)));
   if (alreadyOpen) {
-    return res.status(409).send('A coverage request overlapping that shift is already pending.');
+    return res.redirect('/shifts?error=' + encodeURIComponent('A coverage request overlapping that date is already pending.'));
   }
 
-  const date = nextOccurrenceOf(day);
   const request = {
     id: shortId(),
     bartenderId: req.bartender.id,
     bartenderName: req.bartender.name,
     bartenderPhone: req.bartender.phone,
     day,
+    date,
     shiftType,
-    dateLabel: formatDateLong(date),
+    dateLabel: formatDateLong(parseDateKey(date)),
     status: 'open',
     createdAt: Date.now(),
   };
