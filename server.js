@@ -1320,9 +1320,22 @@ const SHIFT_LABELS = { day: 'Day', night: 'Night', allDay: 'All day', both: 'Day
 // day and night shifts together, as one give-away" for a bartender who is
 // scheduled for both individually. This returns which slot(s) it actually
 // covers, so two requests that overlap (e.g. a lone 'day' request and a
-// 'both' request) can be treated as conflicting.
+// 'both' request) can be treated as conflicting. 'allDay' is treated the
+// same as 'both' here — it's one continuous shift spanning both halves of
+// the day, so a bartender holding it can give up just the day portion, just
+// the night portion, or the whole thing, exactly like someone individually
+// scheduled for both 'day' and 'night'.
 function slotsCoveredBy(shiftType) {
-  return shiftType === 'both' ? ['day', 'night'] : [shiftType];
+  return (shiftType === 'both' || shiftType === 'allDay') ? ['day', 'night'] : [shiftType];
+}
+
+// Every virtual "half-day" slot a bartender actually covers on a given day,
+// expanding any 'allDay' assignment into its day+night halves so a partial
+// give-up request against it can be recognized as their own shift.
+function coveredSlots(realShiftTypes) {
+  const set = new Set();
+  for (const t of realShiftTypes) for (const slot of slotsCoveredBy(t)) set.add(slot);
+  return set;
 }
 const DAY_LABELS = {
   monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday',
@@ -1443,11 +1456,21 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
     ? db.DAYS.filter((day) => byDay[day]).map((day) => {
         const shiftTypes = byDay[day];
         const date = nextOccurrenceOf(day);
+        const hasAllDay = shiftTypes.includes('allDay');
         const hasBoth = shiftTypes.includes('day') && shiftTypes.includes('night');
+        // A lone 'allDay' shift can be given up as just its day half, just
+        // its night half, or the whole thing — same three-way choice as
+        // being individually scheduled for both 'day' and 'night'.
+        const offerDay = shiftTypes.includes('day') || hasAllDay;
+        const offerNight = shiftTypes.includes('night') || hasAllDay;
 
-        const buttons = shiftTypes.map((st) => shiftTypeButton(day, st, SHIFT_LABELS[st])).filter(Boolean);
+        const buttons = [];
+        if (offerDay) buttons.push(shiftTypeButton(day, 'day', SHIFT_LABELS.day));
+        if (offerNight) buttons.push(shiftTypeButton(day, 'night', SHIFT_LABELS.night));
         if (hasBoth) buttons.push(shiftTypeButton(day, 'both', SHIFT_LABELS.both));
-        const anyPending = shiftTypes.some((st) => requestedSlots.has(`${day}-${st}`));
+        if (hasAllDay) buttons.push(shiftTypeButton(day, 'allDay', SHIFT_LABELS.allDay));
+        const visibleButtons = buttons.filter(Boolean);
+        const anyPending = [...coveredSlots(shiftTypes)].some((slot) => requestedSlots.has(`${day}-${slot}`));
 
         return `
           <div class="bartender-row">
@@ -1456,7 +1479,7 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
               <div class="subtitle">${formatDateLong(date)}</div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
-              ${buttons.join('') || (anyPending ? '<span class="subtitle">Coverage requested</span>' : '')}
+              ${visibleButtons.join('') || (anyPending ? '<span class="subtitle">Coverage requested</span>' : '')}
             </div>
           </div>`;
       }).join('')
@@ -1497,7 +1520,8 @@ app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (re
     .filter((s) => s.day === day)
     .map((s) => s.shiftType);
   const requestedSlots = slotsCoveredBy(shiftType);
-  const mine = requestedSlots.every((slot) => myShiftTypesThatDay.includes(slot));
+  const myCoveredSlots = coveredSlots(myShiftTypesThatDay);
+  const mine = requestedSlots.every((slot) => myCoveredSlots.has(slot));
   if (!mine) {
     return res.status(403).send('That is not one of your shifts.');
   }
