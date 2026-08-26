@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const twilio = require('twilio');
+const rateLimit = require('express-rate-limit');
 
 const clover = require('./src/clover');
 const sms = require('./src/sms');
@@ -158,6 +159,32 @@ function verifyTwilioRequest(req, res, next) {
   }
   next();
 }
+
+// Slows down passcode-guessing on the login forms. Keyed per-IP by default;
+// a real bartender/owner mistyping their passcode a few times in 15 minutes
+// never comes close to this. On the limit, redirects back to the same page
+// with the usual error-banner rather than express-rate-limit's default
+// plain-text response, for consistency with the rest of the app.
+function rateLimitHandler(req, res) {
+  res.redirect(`${req.path}?error=${encodeURIComponent('Too many attempts. Please wait a few minutes and try again.')}`);
+}
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: rateLimitHandler,
+});
+// The master passcode grants full owner access on its own (see
+// /admin/master-login below), so it gets a tighter limit than the
+// per-bartender/per-owner logins above.
+const masterLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: rateLimitHandler,
+});
 
 // --- Photo uploads for social posts ---
 const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
@@ -334,7 +361,7 @@ app.get('/login', (req, res) => {
 });
 
 // --- POST /login — verify phone + passcode, start a session ---
-app.post('/login', (req, res) => {
+app.post('/login', loginLimiter, (req, res) => {
   const { phone, passcode } = req.body;
   const bartender = phone && db.findBartenderByPhone(phone.trim());
 
@@ -1114,7 +1141,7 @@ app.get('/admin/login', (req, res) => {
   `);
 });
 
-app.post('/admin/login', (req, res) => {
+app.post('/admin/login', loginLimiter, (req, res) => {
   const { phone, passcode } = req.body;
   const owner = phone && db.findOwnerByPhone(phone.trim());
 
@@ -1157,7 +1184,7 @@ app.get('/admin/master-login', (req, res) => {
   `);
 });
 
-app.post('/admin/master-login', (req, res) => {
+app.post('/admin/master-login', masterLoginLimiter, (req, res) => {
   if (!process.env.OWNER_PASSCODE || req.body.passcode !== process.env.OWNER_PASSCODE) {
     return res.redirect('/admin/master-login?error=' + encodeURIComponent('Incorrect passcode.'));
   }
