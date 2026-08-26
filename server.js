@@ -131,11 +131,15 @@ function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatc
 }
 
 const app = express();
-// Render terminates TLS in front of the app, so without this req.protocol
-// would report 'http' even on the real https:// site — which would break
-// Twilio's webhook signature check below (it signs against the actual
-// public https URL) and mislabel uploaded photo URLs as http://.
-app.set('trust proxy', true);
+// Render terminates TLS one hop in front of the app, so without this
+// req.protocol would report 'http' even on the real https:// site — which
+// would break Twilio's webhook signature check below (it signs against the
+// actual public https URL) and mislabel uploaded photo URLs as http://.
+// Trusting exactly 1 hop (not `true`, which trusts an unlimited chain) is
+// what actually matters here: `true` lets a client spoof its own
+// X-Forwarded-For to fake a different IP on every request, defeating the
+// rate limiter below.
+app.set('trust proxy', 1);
 app.use(express.urlencoded({ extended: false })); // form submissions + Twilio webhook
 app.use(express.static(path.join(__dirname, 'public')));
 
