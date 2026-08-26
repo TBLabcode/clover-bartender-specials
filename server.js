@@ -29,7 +29,14 @@ const DRINKS_PER_1L = 22;
 const { SMS_CONSENT_VERSION } = sms;
 
 function normalizeItemName(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return (s || '')
+    // Fold accented letters ("Jägermeister", "Espolòn") to plain ASCII
+    // ("jagermeister", "espolon") before stripping non-alphanumerics below —
+    // otherwise the accent itself gets treated as a word-breaking character
+    // and splits the word in two, which quietly kills what would otherwise
+    // be a good match against the (plain-ASCII) Clover catalog name.
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 // Best-effort match of a receipt line against real Clover items, so the
