@@ -110,6 +110,11 @@ button:active, .menu-link:active {
   color: #fff;
 }
 
+.menu-link.current, .menu-link.current:visited {
+  background: var(--error);
+  color: #fff;
+}
+
 .confirmation {
   text-align: center;
 }

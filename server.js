@@ -174,9 +174,33 @@ const OWNER_NAV_LINKS = [
   { key: 'schedule', href: '/admin/schedule', label: 'Schedule' },
 ];
 
+// Buttons all start yellow; tapping one turns it red and keeps it red across
+// the page load it navigates to, via sessionStorage (this is a plain
+// server-rendered multi-page app, so there's no in-memory client state to
+// carry that across a navigation otherwise). Fresh logins pass ?login=1 to
+// clear any stale selection left over from a previous session in the same
+// browser tab, so the very first page after signing in is all yellow.
 function ownerNavHtml() {
-  const buttons = OWNER_NAV_LINKS.map((l) => `<a href="${l.href}" class="menu-link">${l.label}</a>`).join('');
-  return `${buttons}<a href="/admin/logout" class="menu-link">Sign out</a>`;
+  const buttons = OWNER_NAV_LINKS.map((l) => `<a href="${l.href}" class="menu-link" data-nav-key="${l.key}">${l.label}</a>`).join('');
+  return `${buttons}<a href="/admin/logout" class="menu-link">Sign out</a>
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search);
+        if (params.has('login')) {
+          sessionStorage.removeItem('ownerNavSelected');
+          params.delete('login');
+          var qs = params.toString();
+          history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+        }
+        var selected = sessionStorage.getItem('ownerNavSelected');
+        document.querySelectorAll('.menu-link[data-nav-key]').forEach(function (link) {
+          if (link.dataset.navKey === selected) link.classList.add('current');
+          link.addEventListener('click', function () {
+            sessionStorage.setItem('ownerNavSelected', link.dataset.navKey);
+          });
+        });
+      })();
+    </script>`;
 }
 
 // Owners stays a small inline link next to "Signed in as", like the nav
@@ -1064,7 +1088,7 @@ app.post('/admin/login', (req, res) => {
   const token = auth.newToken();
   db.addOwnerSession({ token, ownerId: owner.id, createdAt: Date.now() });
   auth.setCookie(res, auth.ADMIN_COOKIE, token, auth.SESSION_TTL_MS);
-  res.redirect('/admin/bartenders');
+  res.redirect('/admin/bartenders?login=1');
 });
 
 // --- Master passcode — bootstraps the first owner account, and works as a
@@ -1103,7 +1127,7 @@ app.post('/admin/master-login', (req, res) => {
   const token = auth.newToken();
   db.addOwnerSession({ token, ownerId: 'master', createdAt: Date.now() });
   auth.setCookie(res, auth.ADMIN_COOKIE, token, auth.SESSION_TTL_MS);
-  res.redirect('/admin/owners');
+  res.redirect('/admin/owners?login=1');
 });
 
 app.get('/admin/logout', (req, res) => {
