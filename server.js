@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const twilio = require('twilio');
 
 const clover = require('./src/clover');
 const sms = require('./src/sms');
@@ -129,8 +130,34 @@ function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatc
 }
 
 const app = express();
+// Render terminates TLS in front of the app, so without this req.protocol
+// would report 'http' even on the real https:// site — which would break
+// Twilio's webhook signature check below (it signs against the actual
+// public https URL) and mislabel uploaded photo URLs as http://.
+app.set('trust proxy', true);
 app.use(express.urlencoded({ extended: false })); // form submissions + Twilio webhook
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Confirms an incoming /sms/* request actually came from Twilio (checks its
+// cryptographic signature against our auth token, the exact URL, and the
+// posted params) rather than trusting whatever "From" number is in the body
+// — without this, anyone who knows these endpoints (this repo is public on
+// GitHub) could forge a request claiming to be any phone number, e.g. an
+// owner "approving" a price change or a bartender "claiming" a shift that
+// was never actually texted in. Skipped in TWILIO_DRY_RUN, the same flag
+// src/sms.js already uses to mean "no real Twilio in the loop" — otherwise
+// local testing (curl'ing these routes directly) would always fail.
+function verifyTwilioRequest(req, res, next) {
+  if (process.env.TWILIO_DRY_RUN === 'true') return next();
+  const signature = req.headers['x-twilio-signature'];
+  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  const valid = signature && twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, url, req.body);
+  if (!valid) {
+    console.error(`Rejected ${req.path}: invalid or missing Twilio signature.`);
+    return res.status(403).send('Invalid signature.');
+  }
+  next();
+}
 
 // --- Photo uploads for social posts ---
 const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
@@ -152,6 +179,15 @@ const upload = multer({
 
 function shortId() {
   return crypto.randomBytes(3).toString('hex'); // e.g. "a1b2c3"
+}
+
+// Every ?error= banner below echoes a URL query param straight into the
+// page - without this, a crafted link like /login?error=<script>... would
+// run arbitrary JS in whoever clicks it, even before they've logged in.
+function escapeHtml(str) {
+  return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
 }
 
 function formatMoney(cents) {
@@ -281,7 +317,7 @@ app.get('/login', (req, res) => {
       <div class="card">
         <h1>Sign in</h1>
         <p class="subtitle">Enter your phone number and passcode to submit specials.</p>
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
         <form method="POST" action="/login">
           <label for="phone">Phone number</label>
           <input type="tel" id="phone" name="phone" placeholder="9105551234" required autofocus />
@@ -654,7 +690,7 @@ app.get('/social/new', requireBartenderAuth, requireCurrentConsent, (req, res) =
         <p class="subtitle">
           Signed in as ${req.bartender.name} · <a href="/menu">Menu</a>
         </p>
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
         <form method="POST" action="/social/new" enctype="multipart/form-data">
           <label for="photo">Photo</label>
           <input type="file" id="photo" name="photo" accept="image/jpeg,image/png" required />
@@ -734,7 +770,7 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
           <h1>Add inventory from a receipt</h1>
           <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'inventory')}</p>
           ${ownerNavHtml()}
-          ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+          ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
           <form method="POST" action="/inventory/new" enctype="multipart/form-data" id="receiptForm">
             <label for="receipt">Receipt photo</label>
             <input type="file" id="receipt" name="receipt" accept="image/jpeg,image/png" required />
@@ -1059,7 +1095,7 @@ app.get('/admin/login', (req, res) => {
       <div class="card">
         <h1>Owner sign in</h1>
         <p class="subtitle">Manage bartenders and owners.</p>
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
         <form method="POST" action="/admin/login">
           <label for="phone">Phone number</label>
           <input type="tel" id="phone" name="phone" placeholder="9105551234" required autofocus />
@@ -1108,7 +1144,7 @@ app.get('/admin/master-login', (req, res) => {
       <div class="card">
         <h1>Master sign in</h1>
         <p class="subtitle">For initial setup or if every owner is locked out.</p>
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
         <form method="POST" action="/admin/master-login">
           <label for="passcode">Master passcode</label>
           <input type="password" id="passcode" name="passcode" required autofocus />
@@ -1170,7 +1206,7 @@ app.get('/admin/owners', requireOwnerAuth, (req, res) => {
         <h1>Owners</h1>
         <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'owners')}</p>
         ${ownerNavHtml()}
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
 
         <ul class="bartender-list">${rows || '<li class="subtitle">No owners added yet.</li>'}</ul>
 
@@ -1256,7 +1292,7 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
         <h1>Bartenders</h1>
         <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'bartenders')}</p>
         ${ownerNavHtml()}
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
 
         <ul class="bartender-list">${rows || '<li class="subtitle">No bartenders added yet.</li>'}</ul>
 
@@ -1614,7 +1650,7 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
           Signed in as ${req.bartender.name} · <a href="/calendar">Calendar</a> · <a href="/menu">Back to menu</a>
         </p>
         ${req.query.sent ? `<div class="subtitle" style="color: var(--accent);">Sent to the other bartenders.</div>` : ''}
-        ${req.query.error ? `<div class="error-banner">${req.query.error}</div>` : ''}
+        ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
         ${pendingHtml}
         <div class="bartender-list">${rowsHtml}</div>
       </div>
@@ -1682,7 +1718,7 @@ app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (re
 });
 
 // --- POST /sms/incoming — Twilio webhook for approval replies ---
-app.post('/sms/incoming', async (req, res) => {
+app.post('/sms/incoming', verifyTwilioRequest, async (req, res) => {
   const from = req.body.From;
   const body = (req.body.Body || '').trim();
 
@@ -1764,7 +1800,7 @@ app.post('/sms/incoming', async (req, res) => {
 // A bartender's "YES [code]" claims an open shift; an owner's "YES [code]"
 // approves a claimed one. Which behavior applies is decided purely by whose
 // phone number sent it, since both roles reply with the same word. ---
-app.post('/sms/shift-incoming', async (req, res) => {
+app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
   const from = req.body.From;
   const body = (req.body.Body || '').trim();
 
