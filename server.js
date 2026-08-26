@@ -172,6 +172,7 @@ const OWNER_NAV_LINKS = [
   { key: 'inventory', href: '/inventory/new', label: 'Inventory' },
   { key: 'bartenders', href: '/admin/bartenders', label: 'Bartenders' },
   { key: 'schedule', href: '/admin/schedule', label: 'Schedule' },
+  { key: 'calendar', href: '/admin/calendar', label: 'Calendar' },
 ];
 
 // Buttons all start yellow; tapping one turns it red and keeps it red across
@@ -390,6 +391,7 @@ app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         <a href="/specials/new" class="menu-link">Pick Specials</a>
         <a href="/social/new" class="menu-link">Make a Social Post</a>
         <a href="/shifts" class="menu-link">My Shifts</a>
+        <a href="/calendar" class="menu-link">Calendar</a>
       </div>
     </body>
     </html>
@@ -1371,11 +1373,6 @@ app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Weekly Schedule</title>
       <link rel="stylesheet" href="/style.css" />
-      <style>
-        .schedule-day { padding: 14px 0; border-bottom: 1px solid #33383d; }
-        .schedule-day:first-child { padding-top: 0; }
-        .schedule-day h2 { font-size: 1.05rem; margin: 0 0 4px; }
-      </style>
     </head>
     <body>
       <div class="card">
@@ -1421,6 +1418,75 @@ function nextOccurrenceOf(dayName) {
 function formatDateLong(date) {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 }
+
+// Full weekly roster, read-only — who's working each day/shift, for the
+// "Calendar" view both bartenders and owners can see (as opposed to
+// /admin/schedule's editable dropdowns, or /shifts' bartender-only view).
+function calendarBodyHtml() {
+  const schedule = db.getSchedule();
+  const nameById = new Map(db.getBartenders().map((b) => [b.id, b.name]));
+
+  return db.DAYS.map((day) => {
+    const date = nextOccurrenceOf(day);
+    const rows = db.SHIFT_TYPES.map((shiftType) => {
+      const bartenderId = schedule[day][shiftType];
+      const name = bartenderId ? (nameById.get(bartenderId) || 'Unknown') : '— unassigned —';
+      return `<p class="subtitle">${SHIFT_LABELS[shiftType]}: ${name}</p>`;
+    }).join('');
+    return `
+      <div class="schedule-day">
+        <h2>${formatDateLong(date)}</h2>
+        ${rows}
+      </div>`;
+  }).join('');
+}
+
+// --- GET /calendar — bartender-facing read-only view of the full roster ---
+app.get('/calendar', requireBartenderAuth, requireCurrentConsent, (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Calendar</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Calendar</h1>
+        <p class="subtitle">
+          Signed in as ${req.bartender.name} · <a href="/menu">Back to menu</a>
+        </p>
+        ${calendarBodyHtml()}
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- GET /admin/calendar — owner-facing read-only view of the full roster ---
+app.get('/admin/calendar', requireOwnerAuth, (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Calendar</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Calendar</h1>
+        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'calendar')}</p>
+        ${ownerNavHtml()}
+        ${calendarBodyHtml()}
+      </div>
+    </body>
+    </html>
+  `);
+});
 
 // --- GET /shifts — bartender's own upcoming shifts, with a way to give one away ---
 app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
