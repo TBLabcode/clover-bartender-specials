@@ -172,6 +172,12 @@ function verifyTwilioRequest(req, res, next) {
 function rateLimitHandler(req, res) {
   res.redirect(`${req.path}?error=${encodeURIComponent('Too many attempts. Please wait a few minutes and try again.')}`);
 }
+// TEMPORARY — diagnosing why the rate limiter isn't accumulating hits on
+// Render; remove once the cause is confirmed.
+app.use('/admin/master-login', (req, res, next) => {
+  console.log('DEBUG req.ip:', req.ip, '| x-forwarded-for:', req.headers['x-forwarded-for']);
+  next();
+});
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
