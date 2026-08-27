@@ -1523,6 +1523,7 @@ function parseDateKey(key) {
 // looking several weeks or months out wants an actual calendar order.
 function calendarBodyHtml(weeks) {
   const schedule = db.getSchedule();
+  const overrides = db.getScheduleOverrides();
   const nameById = new Map(db.getBartenders().map((b) => [b.id, b.name]));
 
   const entries = [];
@@ -1532,10 +1533,20 @@ function calendarBodyHtml(weeks) {
   entries.sort((a, b) => a.date - b.date);
 
   return entries.map(({ day, date }) => {
+    // An approved coverage swap overrides just this one date (see
+    // db.setScheduleOverride, set in /sms/shift-incoming's owner-approval
+    // branch) without touching the recurring weekly schedule below it.
+    const dateOverrides = overrides[dateKeyOf(date)] || {};
     const rows = db.SHIFT_TYPES.map((shiftType) => {
-      const bartenderId = schedule[day][shiftType];
-      const name = bartenderId ? (nameById.get(bartenderId) || 'Unknown') : '— unassigned —';
-      return `<p class="subtitle">${SHIFT_LABELS[shiftType]}: ${name}</p>`;
+      const regularId = schedule[day][shiftType];
+      const regularName = regularId ? (nameById.get(regularId) || 'Unknown') : null;
+      const overrideId = dateOverrides[shiftType];
+      if (overrideId) {
+        const overrideName = nameById.get(overrideId) || 'Unknown';
+        const coveringNote = regularName && regularName !== overrideName ? ` (covering for ${regularName})` : '';
+        return `<p class="subtitle">${SHIFT_LABELS[shiftType]}: ${overrideName}${coveringNote}</p>`;
+      }
+      return `<p class="subtitle">${SHIFT_LABELS[shiftType]}: ${regularName || '— unassigned —'}</p>`;
     }).join('');
     return `
       <div class="schedule-day">
@@ -1885,6 +1896,14 @@ app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
       return res.send('<Response><Message>No matching claimed shift found. Include the code, e.g. YES a1b2c3.</Message></Response>');
     }
 
+    // Record who's actually covering this one specific date, without
+    // touching the recurring weekly schedule — the regular person is still
+    // on the roster for every other future occurrence of this weekday.
+    if (request.date) {
+      for (const slot of slotsCoveredBy(request.shiftType)) {
+        db.setScheduleOverride(request.date, slot, request.claimedByBartenderId);
+      }
+    }
     db.removeCoverageRequest(request.id);
 
     const settledMessage = `${request.dateLabel} (${SHIFT_LABELS[request.shiftType]}) is now covered by ${request.claimedByName}, approved by an owner.`;

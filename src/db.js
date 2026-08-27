@@ -34,6 +34,7 @@ function readDb() {
       ownerSessions: [],
       schedule: emptySchedule(),
       coverageRequests: [],
+      scheduleOverrides: {},
     };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
@@ -44,6 +45,7 @@ function readDb() {
   if (!data.ownerSessions) data.ownerSessions = [];
   if (!data.schedule) data.schedule = emptySchedule();
   if (!data.coverageRequests) data.coverageRequests = [];
+  if (!data.scheduleOverrides) data.scheduleOverrides = {};
   return data;
 }
 
@@ -248,6 +250,24 @@ function removeCoverageRequest(id) {
   return removed;
 }
 
+// --- Schedule overrides: a one-off swap for a specific calendar date, once
+// an owner approves a coverage request, WITHOUT touching the recurring
+// weekly schedule (that swap is only for this one occurrence — the regular
+// person is still on the recurring roster for every other future week). ---
+
+// date is a local yyyy-mm-dd key (see dateKeyOf() in server.js).
+function setScheduleOverride(date, shiftType, bartenderId) {
+  const data = readDb();
+  if (!data.scheduleOverrides[date]) data.scheduleOverrides[date] = {};
+  data.scheduleOverrides[date][shiftType] = bartenderId || null;
+  writeDb(data);
+  return data.scheduleOverrides;
+}
+
+function getScheduleOverrides() {
+  return readDb().scheduleOverrides;
+}
+
 module.exports = {
   DAYS,
   SHIFT_TYPES,
@@ -281,4 +301,6 @@ module.exports = {
   findCoverageRequest,
   updateCoverageRequest,
   removeCoverageRequest,
+  setScheduleOverride,
+  getScheduleOverrides,
 };
