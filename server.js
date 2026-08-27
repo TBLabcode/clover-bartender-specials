@@ -1903,12 +1903,14 @@ app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
 
   const match = body.match(/^YES\s+([a-zA-Z0-9]+)$/i) || body.match(/^YES$/i);
   if (!match) {
+    console.log(`DEBUG shift-incoming: no regex match. from=${from} body=${JSON.stringify(body)}`);
     return res.send('<Response><Message>Reply "YES [code]" to take or approve a shift.</Message></Response>');
   }
   const code = match[1];
 
   const bartender = db.findBartenderByPhone(from);
   const owner = db.findOwnerByPhone(from);
+  console.log(`DEBUG shift-incoming: from=${from} code=${code} bartender=${bartender ? bartender.name : null} owner=${owner ? owner.name : null} allOpenIds=${JSON.stringify(db.getCoverageRequests().filter((r) => r.status === 'open').map((r) => r.id))} allClaimedIds=${JSON.stringify(db.getCoverageRequests().filter((r) => r.status === 'claimed').map((r) => r.id))}`);
 
   if (bartender) {
     const open = db.getCoverageRequests().filter((r) => r.status === 'open');
