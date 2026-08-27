@@ -1160,7 +1160,7 @@ app.post('/admin/login', loginLimiter, (req, res) => {
   const token = auth.newToken();
   db.addOwnerSession({ token, ownerId: owner.id, createdAt: Date.now() });
   auth.setCookie(res, auth.ADMIN_COOKIE, token, auth.SESSION_TTL_MS);
-  res.redirect('/admin/bartenders?login=1');
+  res.redirect('/inventory/new?login=1');
 });
 
 // --- Master passcode — bootstraps the first owner account, and works as a
