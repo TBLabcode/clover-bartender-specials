@@ -120,6 +120,25 @@ function setBartenderConsentVersion(id, version) {
   return bartender;
 }
 
+// Re-saves every bartender's phone through normalizePhone (fixes a stray
+// leading "+1" some records were entered with, which breaks outbound texts —
+// `+1${phone}` becomes "+1+1XXXXXXXXXX") without touching their passcode or
+// anything else. Already-clean numbers pass through unchanged. Returns how
+// many records actually changed.
+function normalizeAllBartenderPhones() {
+  const data = readDb();
+  let fixed = 0;
+  for (const b of data.bartenders) {
+    const clean = normalizePhone(b.phone);
+    if (clean !== b.phone) {
+      b.phone = clean;
+      fixed += 1;
+    }
+  }
+  if (fixed > 0) writeDb(data);
+  return fixed;
+}
+
 function removeBartender(id) {
   const data = readDb();
   const idx = data.bartenders.findIndex((b) => b.id === id);
@@ -295,6 +314,7 @@ module.exports = {
   getBartenders,
   findBartenderByPhone,
   setBartenderConsentVersion,
+  normalizeAllBartenderPhones,
   removeBartender,
   addSession,
   findSessionByToken,

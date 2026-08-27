@@ -1328,8 +1328,13 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
         <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'bartenders')}</p>
         ${ownerNavHtml()}
         ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
+        ${req.query.fixed ? `<div class="subtitle" style="color: var(--accent);">Fixed ${escapeHtml(req.query.fixed)} phone number(s) — passcodes untouched.</div>` : ''}
 
         <ul class="bartender-list">${rows || '<li class="subtitle">No bartenders added yet.</li>'}</ul>
+
+        <form method="POST" action="/admin/bartenders/normalize-phones">
+          <button type="submit" class="secondary-btn">Fix phone number formatting</button>
+        </form>
 
         <h1 style="margin-top: 32px;">Add a bartender</h1>
         <form method="POST" action="/admin/bartenders">
@@ -1348,6 +1353,14 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
     </body>
     </html>
   `);
+});
+
+// --- POST /admin/bartenders/normalize-phones — fixes a stray leading "+1"
+// on any bartender's stored phone (breaks outbound texts) without touching
+// their passcode or requiring them to be removed and re-added. ---
+app.post('/admin/bartenders/normalize-phones', requireOwnerAuth, (req, res) => {
+  const fixed = db.normalizeAllBartenderPhones();
+  res.redirect('/admin/bartenders?fixed=' + fixed);
 });
 
 app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
