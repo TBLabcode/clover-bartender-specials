@@ -273,11 +273,13 @@ function ownerNavHtml() {
     </script>`;
 }
 
-// Owners stays a small inline link next to "Signed in as", like the nav
-// looked before the big-button redesign, rather than a full-width button.
+// Owners and Coverage stay small inline links next to "Signed in as",
+// like the nav looked before the big-button redesign, rather than full-width
+// buttons — both are occasional admin tasks, not everyday ones.
 function ownerSubtitleHtml(ownerName, currentPage) {
   const ownersLink = currentPage === 'owners' ? '' : ' · <a href="/admin/owners">Owners</a>';
-  return `Signed in as ${ownerName}${ownersLink}`;
+  const coverageLink = currentPage === 'coverage' ? '' : ' · <a href="/admin/coverage">Coverage</a>';
+  return `Signed in as ${ownerName}${ownersLink}${coverageLink}`;
 }
 
 // --- Auth middleware ---
@@ -1469,6 +1471,55 @@ app.post('/admin/schedule', requireOwnerAuth, (req, res) => {
     }
   }
   res.redirect('/admin/schedule?saved=1');
+});
+
+// --- GET /admin/coverage — owner view of shift-coverage requests, with a
+// way to cancel one that's stuck (e.g. a reply landed on the wrong webhook
+// and never advanced) instead of it sitting there blocking a fresh attempt.
+app.get('/admin/coverage', requireOwnerAuth, (req, res) => {
+  const requests = db.getCoverageRequests();
+  const rowsHtml = requests.length
+    ? requests.map((r) => `
+        <li class="bartender-row">
+          <div>
+            <strong>${escapeHtml(r.dateLabel)} (${escapeHtml(SHIFT_LABELS[r.shiftType] || r.shiftType)})</strong>
+            <div class="subtitle">
+              ${escapeHtml(r.bartenderName)} gave it up · status: ${escapeHtml(r.status)}
+              ${r.claimedByName ? ` · claimed by ${escapeHtml(r.claimedByName)}, waiting on approval` : ''}
+            </div>
+          </div>
+          <form method="POST" action="/admin/coverage/${encodeURIComponent(r.id)}/cancel">
+            <button type="submit" class="danger">Cancel</button>
+          </form>
+        </li>`).join('')
+    : '<li class="subtitle">No open shift-coverage requests.</li>';
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Coverage Requests</title>
+      <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+      <div class="card">
+        <h1>Coverage Requests</h1>
+        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'coverage')}</p>
+        ${ownerNavHtml()}
+        <p class="subtitle">Cancel a request if it gets stuck instead of waiting on it.</p>
+        <ul class="bartender-list">${rowsHtml}</ul>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// --- POST /admin/coverage/:id/cancel — remove a stuck/unwanted request ---
+app.post('/admin/coverage/:id/cancel', requireOwnerAuth, (req, res) => {
+  db.removeCoverageRequest(req.params.id);
+  res.redirect('/admin/coverage');
 });
 
 // Returns the date of the next upcoming occurrence of dayName (today counts
