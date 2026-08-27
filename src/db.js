@@ -35,6 +35,7 @@ function readDb() {
       schedule: emptySchedule(),
       coverageRequests: [],
       scheduleOverrides: {},
+      nextCoverageRequestNumber: 0,
     };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
@@ -46,6 +47,7 @@ function readDb() {
   if (!data.schedule) data.schedule = emptySchedule();
   if (!data.coverageRequests) data.coverageRequests = [];
   if (!data.scheduleOverrides) data.scheduleOverrides = {};
+  if (!data.nextCoverageRequestNumber) data.nextCoverageRequestNumber = 0;
   return data;
 }
 
@@ -217,6 +219,17 @@ function getBartenderShifts(bartenderId) {
 // --- Shift-coverage requests: a bartender giving away one of their own
 // scheduled shifts, another bartender claiming it, then an owner approving ---
 
+// A short, easy-to-text code for a coverage request ("1", "2", "3"...)
+// instead of a random hex string — texting "YES 1" on a phone keyboard is a
+// lot less error-prone than "YES a1b2c3". Numbers are never reused, so an
+// old text with a stale code can't accidentally match a newer request.
+function nextCoverageRequestNumber() {
+  const data = readDb();
+  data.nextCoverageRequestNumber += 1;
+  writeDb(data);
+  return data.nextCoverageRequestNumber;
+}
+
 function addCoverageRequest(request) {
   const data = readDb();
   data.coverageRequests.push(request);
@@ -296,6 +309,7 @@ module.exports = {
   getSchedule,
   setScheduleSlot,
   getBartenderShifts,
+  nextCoverageRequestNumber,
   addCoverageRequest,
   getCoverageRequests,
   findCoverageRequest,

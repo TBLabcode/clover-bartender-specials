@@ -1482,7 +1482,7 @@ app.get('/admin/coverage', requireOwnerAuth, (req, res) => {
     ? requests.map((r) => `
         <li class="bartender-row">
           <div>
-            <strong>${escapeHtml(r.dateLabel)} (${escapeHtml(SHIFT_LABELS[r.shiftType] || r.shiftType)})</strong>
+            <strong>${escapeHtml(r.dateLabel)} (${escapeHtml(SHIFT_LABELS[r.shiftType] || r.shiftType)}) · code ${escapeHtml(r.id)}</strong>
             <div class="subtitle">
               ${escapeHtml(r.bartenderName)} gave it up · status: ${escapeHtml(r.status)}
               ${r.claimedByName ? ` · claimed by ${escapeHtml(r.claimedByName)}, waiting on approval` : ''}
@@ -1790,7 +1790,7 @@ app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (re
   }
 
   const request = {
-    id: shortId(),
+    id: String(db.nextCoverageRequestNumber()),
     bartenderId: req.bartender.id,
     bartenderName: req.bartender.name,
     bartenderPhone: req.bartender.phone,
@@ -1901,16 +1901,17 @@ app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
 
   res.set('Content-Type', 'text/xml');
 
-  const match = body.match(/^YES\s+([a-zA-Z0-9]+)$/i) || body.match(/^YES$/i);
+  // \s* (not \s+) so "YES1"/"YES 1" both work — a bartender texting fast on
+  // a phone keyboard won't always get the space in, and there's no reason
+  // to bounce a perfectly clear reply just for missing it.
+  const match = body.match(/^YES\s*([a-zA-Z0-9]+)$/i) || body.match(/^YES$/i);
   if (!match) {
-    console.log(`DEBUG shift-incoming: no regex match. from=${from} body=${JSON.stringify(body)}`);
     return res.send('<Response><Message>Reply "YES [code]" to take or approve a shift.</Message></Response>');
   }
   const code = match[1];
 
   const bartender = db.findBartenderByPhone(from);
   const owner = db.findOwnerByPhone(from);
-  console.log(`DEBUG shift-incoming: from=${from} code=${code} bartender=${bartender ? bartender.name : null} owner=${owner ? owner.name : null} allOpenIds=${JSON.stringify(db.getCoverageRequests().filter((r) => r.status === 'open').map((r) => r.id))} allClaimedIds=${JSON.stringify(db.getCoverageRequests().filter((r) => r.status === 'claimed').map((r) => r.id))}`);
 
   if (bartender) {
     const open = db.getCoverageRequests().filter((r) => r.status === 'open');
@@ -1919,7 +1920,7 @@ app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
       : (open.length === 1 ? open[0] : undefined);
 
     if (!request) {
-      return res.send('<Response><Message>No matching open shift found. Include the code, e.g. YES a1b2c3.</Message></Response>');
+      return res.send('<Response><Message>No matching open shift found. Include the code, e.g. YES 3.</Message></Response>');
     }
     if (request.bartenderId === bartender.id) {
       return res.send('<Response><Message>That\'s your own shift — you can\'t claim it yourself.</Message></Response>');
@@ -1946,7 +1947,7 @@ app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
       : (claimed.length === 1 ? claimed[0] : undefined);
 
     if (!request) {
-      return res.send('<Response><Message>No matching claimed shift found. Include the code, e.g. YES a1b2c3.</Message></Response>');
+      return res.send('<Response><Message>No matching claimed shift found. Include the code, e.g. YES 3.</Message></Response>');
     }
 
     // Record who's actually covering this one specific date, without
