@@ -1111,7 +1111,7 @@ app.post('/inventory/confirm', requireOwnerAuth, async (req, res) => {
         <div class="big">${failed.length > 0 ? '⚠️' : '✅'}</div>
         <p>${summaryHtml}</p>
         ${failed.length > 0 ? `<p class="subtitle">${failed.length} item${failed.length > 1 ? 's' : ''} failed — the ones marked ✅ above were still added. Retry the failed ones separately.</p>` : ''}
-        <p><a href="/admin/bartenders">Back to admin</a></p>
+        <p><a href="/inventory/new">Back to Inventory</a></p>
       </div>
     </body>
     </html>
