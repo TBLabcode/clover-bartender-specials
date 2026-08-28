@@ -459,7 +459,7 @@ app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         <p class="subtitle">
           Signed in as ${req.bartender.name} · <a href="/logout">not you?</a>
         </p>
-        <a href="/specials/new" class="menu-link">Pick Specials</a>
+        <a href="/specials/new" class="menu-link">Pick Daily Specials</a>
         <a href="/social/new" class="menu-link">Make a Social Post</a>
         <a href="/shifts" class="menu-link">Get Shift Covered</a>
       </div>
