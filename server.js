@@ -812,12 +812,12 @@ app.get('/inventory/new', requireOwnerAuth, (req, res) => {
 
             <button type="submit">Import Items</button>
           </form>
-          <p class="subtitle"><a href="/admin/bartenders">Cancel</a></p>
+          <p class="subtitle"><a href="/inventory/new">Cancel</a></p>
         </div>
         <div id="loadingView" class="loading-view">
           <div class="spinner-beer">🍺</div>
           <p class="subtitle">Reading your receipt…</p>
-          <p class="subtitle"><a href="/admin/bartenders">Cancel</a></p>
+          <p class="subtitle"><a href="/inventory/new">Cancel</a></p>
         </div>
       </div>
 
@@ -903,7 +903,7 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
 
             <button type="submit">Add to inventory</button>
           </form>
-          <p class="subtitle"><a href="/admin/bartenders">Cancel</a></p>
+          <p class="subtitle"><a href="/inventory/new">Cancel</a></p>
         </div>
 
         <script>
