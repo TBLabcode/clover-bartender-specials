@@ -239,9 +239,9 @@ function dollarsToCents(dollarsStr) {
 // need a full-width button.
 const OWNER_NAV_LINKS = [
   { key: 'inventory', href: '/inventory/new', label: 'Inventory' },
-  { key: 'bartenders', href: '/admin/bartenders', label: 'Bartenders' },
-  { key: 'schedule', href: '/admin/schedule', label: 'Schedule' },
-  { key: 'calendar', href: '/admin/calendar', label: 'Calendar' },
+  { key: 'bartenders', href: '/admin/bartenders', label: 'Add/Delete Bartenders' },
+  { key: 'schedule', href: '/admin/schedule', label: 'Change Bartender Schedule' },
+  { key: 'calendar', href: '/admin/calendar', label: "Who's Working When" },
 ];
 
 // Buttons all start yellow; tapping one turns it red and keeps it red across
