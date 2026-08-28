@@ -861,10 +861,13 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
 
     const rowsHtml = lines
       .map((line, i) => {
+        // Liquor gets converted to pours per bottle; anything else (beer,
+        // seltzer, cider cans/bottles) is sold and counted as one drink per
+        // unit, so the count itself is the right default rather than blank.
         const drinks =
           line.sizeMl === 750 ? line.count * DRINKS_PER_750ML
           : line.sizeMl === 1000 ? line.count * DRINKS_PER_1L
-          : '';
+          : line.count;
         const lookupName = line.displayName || line.name;
         const match = findBestItemMatch(lookupName, items, line.code);
         const sizeLabel = line.sizeMl ? `${line.sizeMl}ml` : (line.rawSize || 'unknown size');
