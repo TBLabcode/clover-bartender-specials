@@ -35,7 +35,12 @@ async function extractReceiptLines(imageBuffer, mimeType) {
     'https://api.anthropic.com/v1/messages',
     {
       model: 'claude-sonnet-4-5',
-      max_tokens: 2048,
+      // 2048 was enough for a small receipt but silently truncated the JSON
+      // array mid-object on a large one (e.g. a 25-line liquor order) before
+      // it ever reached a closing "]" - the regex below then finds no valid
+      // array at all and throws, which looks like a total extraction
+      // failure rather than what it actually was: running out of room.
+      max_tokens: 8192,
       messages: [
         {
           role: 'user',
