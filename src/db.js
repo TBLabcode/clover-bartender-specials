@@ -36,6 +36,7 @@ function readDb() {
       coverageRequests: [],
       scheduleOverrides: {},
       nextCoverageRequestNumber: 0,
+      drinksPerUnitOverrides: {},
     };
   }
   const raw = fs.readFileSync(DB_PATH, 'utf8');
@@ -48,6 +49,7 @@ function readDb() {
   if (!data.coverageRequests) data.coverageRequests = [];
   if (!data.scheduleOverrides) data.scheduleOverrides = {};
   if (!data.nextCoverageRequestNumber) data.nextCoverageRequestNumber = 0;
+  if (!data.drinksPerUnitOverrides) data.drinksPerUnitOverrides = {};
   return data;
 }
 
@@ -300,6 +302,22 @@ function getScheduleOverrides() {
   return readDb().scheduleOverrides;
 }
 
+// --- Per-item pour overrides: some bottles (a cheap sparkling wine used for
+// bottomless mimosas, say) get poured in far bigger portions than the
+// standard 1.5oz liquor pour the receipt-import screen assumes by default.
+// Keyed by Clover item ID so a rename doesn't break it. ---
+
+function getDrinksPerUnitOverrides() {
+  return readDb().drinksPerUnitOverrides;
+}
+
+function setDrinksPerUnitOverride(itemId, drinksPerUnit) {
+  const data = readDb();
+  data.drinksPerUnitOverrides[itemId] = drinksPerUnit;
+  writeDb(data);
+  return data.drinksPerUnitOverrides;
+}
+
 module.exports = {
   DAYS,
   SHIFT_TYPES,
@@ -337,4 +355,6 @@ module.exports = {
   removeCoverageRequest,
   setScheduleOverride,
   getScheduleOverrides,
+  getDrinksPerUnitOverrides,
+  setDrinksPerUnitOverride,
 };

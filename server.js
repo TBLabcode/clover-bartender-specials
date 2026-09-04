@@ -102,7 +102,7 @@ function findBestItemMatch(extractedName, items, extractedCode) {
   return best;
 }
 
-function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatchedName, unmatchedCode) {
+function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatchedName, unmatchedCode, originalCount) {
   const startNew = !matchedItem && unmatchedName;
   return `
     <div class="item-row" data-mode="${startNew ? 'new' : 'existing'}">
@@ -126,6 +126,12 @@ function renderInventoryRow(index, matchedItem, drinksValue, receiptNote, unmatc
       <label>Drinks to add</label>
       <input type="number" class="drinks-input" name="drinksToAdd" step="1" min="1" value="${drinksValue}" />
       ${receiptNote ? `<p class="subtitle" style="margin: 6px 0 0;">${receiptNote}</p>` : ''}
+      <input type="hidden" name="originalIndex" value="${index}" />
+      <input type="hidden" class="original-count-input" name="originalCount" value="${originalCount || ''}" />
+      <label style="display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 10px;">
+        <input type="checkbox" name="rememberRatio" value="${index}" style="width: auto;" />
+        Remember this many drinks per unit for next time
+      </label>
       <button type="button" class="remove-row-btn danger">Remove item</button>
     </div>`;
 }
@@ -858,18 +864,24 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
     const lines = await receipt.extractReceiptLines(imageBuffer, mimeType);
     const items = await clover.getItems();
     const itemsJson = JSON.stringify(items.map((i) => ({ id: i.id, name: i.name }))).replace(/</g, '\\u003c');
+    const drinksPerUnitOverrides = db.getDrinksPerUnitOverrides();
 
     const rowsHtml = lines
       .map((line, i) => {
-        // Liquor gets converted to pours per bottle; anything else (beer,
-        // seltzer, cider cans/bottles) is sold and counted as one drink per
-        // unit, so the count itself is the right default rather than blank.
-        const drinks =
-          line.sizeMl === 750 ? line.count * DRINKS_PER_750ML
-          : line.sizeMl === 1000 ? line.count * DRINKS_PER_1L
-          : line.count;
         const lookupName = line.displayName || line.name;
         const match = findBestItemMatch(lookupName, items, line.code);
+
+        // A per-item override (e.g. a cheap sparkling wine poured in much
+        // bigger glasses than a standard 1.5oz liquor pour) always wins;
+        // otherwise liquor gets converted to pours per bottle, and anything
+        // else (beer, seltzer, cider cans/bottles) is sold and counted as
+        // one drink per unit, so the count itself is the right default.
+        const override = match ? drinksPerUnitOverrides[match.id] : undefined;
+        const drinks =
+          override != null ? Math.round(line.count * override)
+          : line.sizeMl === 750 ? line.count * DRINKS_PER_750ML
+          : line.sizeMl === 1000 ? line.count * DRINKS_PER_1L
+          : line.count;
         const sizeLabel = line.sizeMl ? `${line.sizeMl}ml` : (line.rawSize || 'unknown size');
         const codeNote = line.code ? ` (code ${line.code})` : '';
         const nameNote = lookupName !== line.name ? `"${line.name}" → ${lookupName}` : `"${line.name}"`;
@@ -878,7 +890,7 @@ app.post('/inventory/new', requireOwnerAuth, upload.single('receipt'), async (re
           : '';
         const receiptNote = `From receipt: ${nameNote}${codeNote} — ${line.count}${caseNote} × ${sizeLabel}`;
 
-        return renderInventoryRow(i, match, drinks, receiptNote, match ? null : lookupName, line.code);
+        return renderInventoryRow(i, match, drinks, receiptNote, match ? null : lookupName, line.code, line.count);
       })
       .join('');
 
@@ -1054,6 +1066,12 @@ app.post('/inventory/confirm', requireOwnerAuth, async (req, res) => {
   const newItemPrices = [].concat(req.body.newItemPrice || []);
   const newItemCodes = [].concat(req.body.newItemCode || []);
   const drinksToAdd = [].concat(req.body.drinksToAdd || []).map((n) => parseInt(n, 10));
+  const originalIndexes = [].concat(req.body.originalIndex || []);
+  const originalCounts = [].concat(req.body.originalCount || []).map((n) => parseFloat(n));
+  // Checkboxes only submit a value when checked, so this is just the set of
+  // originalIndex values for rows where "remember this ratio" was ticked —
+  // not positionally aligned with the arrays above, matched via originalIndexes instead.
+  const rememberedIndexes = new Set([].concat(req.body.rememberRatio || []));
 
   const rowCount = drinksToAdd.length;
   if (rowCount === 0) {
@@ -1086,6 +1104,10 @@ app.post('/inventory/confirm', requireOwnerAuth, async (req, res) => {
       const newQuantity = await clover.addToItemStock(item.id, drinksToAdd[i]);
       const newTag = itemIds[i] ? '' : ' (new item)';
       succeeded.push(`${item.name}${newTag}: +${drinksToAdd[i]} (now ${newQuantity})`);
+
+      if (rememberedIndexes.has(originalIndexes[i]) && Number.isFinite(originalCounts[i]) && originalCounts[i] > 0) {
+        db.setDrinksPerUnitOverride(item.id, drinksToAdd[i] / originalCounts[i]);
+      }
     } catch (err) {
       const label = itemIds[i] ? itemIds[i] : newItemNames[i];
       failed.push(`${label}: ${err.message}`);
