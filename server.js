@@ -1405,31 +1405,34 @@ function managerPermissionCheckboxesHtml(permissions, disabled) {
 }
 
 // A single "Manager" checkbox that expands into the three permission
-// checkboxes when checked, collapsing back down when unchecked — rather than
-// always showing all three inline, which the owner found cluttered.
+// checkboxes when clicked, collapsing back down on a second click — rather
+// than always showing all three inline (cluttered) or a plain checkbox+label
+// (the owner wanted it to read as a tab, matching the app's yellow-button
+// look elsewhere). Collapsing hides AND disables the three checkboxes, so
+// hitting Save with the tab collapsed submits no permissions at all — the
+// same "not a manager" result the old plain checkbox gave when unchecked.
 function managerToggleHtml(isManager, permissions) {
   return `
-    <label class="permission-checkbox manager-toggle-label">
-      <input type="checkbox" class="manager-toggle" ${isManager ? 'checked' : ''} />
-      Manager
-    </label>
+    <button type="button" class="manager-tab-btn" data-expanded="${isManager ? 'true' : 'false'}">Manager</button>
     <div class="permissions-form manager-permissions" style="${isManager ? '' : 'display:none;'}">
       ${managerPermissionCheckboxesHtml(permissions, !isManager)}
     </div>`;
 }
 
-// Wires every "Manager" toggle on the page to show/hide (and enable/disable)
-// its own group of permission checkboxes. Shared by both the bartender list
-// and the "Add a bartender" form since both use managerToggleHtml.
+// Wires every "Manager" tab on the page to show/hide (and enable/disable)
+// its own group of permission checkboxes on click. Shared by both the
+// bartender list and the "Add a bartender" form since both use
+// managerToggleHtml.
 const MANAGER_TOGGLE_SCRIPT = `
   <script>
-    document.querySelectorAll('.manager-toggle').forEach((toggle) => {
-      const permsDiv = toggle.closest('form, div').querySelector('.manager-permissions');
-      function sync() {
-        permsDiv.style.display = toggle.checked ? 'flex' : 'none';
-        permsDiv.querySelectorAll('input[type=checkbox]').forEach((cb) => { cb.disabled = !toggle.checked; });
-      }
-      toggle.addEventListener('change', sync);
+    document.querySelectorAll('.manager-tab-btn').forEach((btn) => {
+      const permsDiv = btn.closest('form, div').querySelector('.manager-permissions');
+      btn.addEventListener('click', () => {
+        const expanded = btn.dataset.expanded !== 'true';
+        btn.dataset.expanded = expanded ? 'true' : 'false';
+        permsDiv.style.display = expanded ? 'flex' : 'none';
+        permsDiv.querySelectorAll('input[type=checkbox]').forEach((cb) => { cb.disabled = !expanded; });
+      });
     });
   </script>`;
 
