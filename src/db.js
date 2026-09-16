@@ -141,17 +141,42 @@ function normalizeAllBartenderPhones() {
   return fixed;
 }
 
-// Managers are bartenders with one extra flag — they keep every normal
-// bartender ability (specials, shift coverage) and additionally get the
-// owner-only inventory-upload screen. No separate account type/table so
-// promoting or demoting someone doesn't touch their passcode or history.
-function setBartenderManager(id, isManager) {
+// Managers are bartenders with an extra set of permission flags — they keep
+// every normal bartender ability (specials, shift coverage) and additionally
+// get whichever owner-only admin screens their permissions grant. No
+// separate account type/table, so granting or revoking access doesn't touch
+// a bartender's passcode or history.
+const MANAGER_PERMISSION_KEYS = ['inventory', 'bartenders', 'schedule'];
+
+function setBartenderManagerPermissions(id, permissions) {
   const data = readDb();
   const bartender = data.bartenders.find((b) => b.id === id);
   if (!bartender) return null;
-  bartender.isManager = !!isManager;
+  bartender.managerPermissions = {
+    inventory: !!permissions.inventory,
+    bartenders: !!permissions.bartenders,
+    schedule: !!permissions.schedule,
+  };
   writeDb(data);
   return bartender;
+}
+
+// Normalizes a bartender's manager permissions, including the one-time
+// backward-compat case: bartenders flagged manager under the older
+// isManager-boolean version of this feature (before per-permission control
+// existed) only ever got inventory access, so treat that record the same way.
+function bartenderManagerPermissions(bartender) {
+  if (bartender.managerPermissions) return bartender.managerPermissions;
+  if (bartender.isManager) return { inventory: true, bartenders: false, schedule: false };
+  return { inventory: false, bartenders: false, schedule: false };
+}
+
+// True if this bartender has been granted at least one manager permission —
+// used to decide whether to show manager-only UI (the "(Manager)" badge,
+// their own "Upload Inventory"/etc. menu links) without caring which
+// specific permission(s) they have.
+function bartenderHasAnyManagerPermission(bartender) {
+  return Object.values(bartenderManagerPermissions(bartender)).some(Boolean);
 }
 
 function removeBartender(id) {
@@ -346,7 +371,10 @@ module.exports = {
   findBartenderByPhone,
   setBartenderConsentVersion,
   normalizeAllBartenderPhones,
-  setBartenderManager,
+  MANAGER_PERMISSION_KEYS,
+  setBartenderManagerPermissions,
+  bartenderManagerPermissions,
+  bartenderHasAnyManagerPermission,
   removeBartender,
   addSession,
   findSessionByToken,

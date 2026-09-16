@@ -288,15 +288,17 @@ function ownerSubtitleHtml(ownerName, currentPage) {
   return `Signed in as ${ownerName}${ownersLink}${coverageLink}`;
 }
 
-// The inventory screens are shared by owners and manager-flagged bartenders
-// (see requireInventoryAccess). A manager only gets inventory, not the rest
-// of the owner admin pages, so they get a plain subtitle and a link back to
-// their own /menu instead of the full owner nav.
-function inventorySubtitleHtml(actor) {
-  return actor.isOwner ? ownerSubtitleHtml(actor.name, 'inventory') : `Signed in as ${actor.name}`;
+// Admin screens a manager can be granted per-permission access to (inventory
+// / bartenders / schedule — see requireManagerPermission) are shared by
+// owners and manager-flagged bartenders. A manager only sees the specific
+// screen(s) their permissions grant, not the rest of the owner admin pages,
+// so they get a plain subtitle and a link back to their own /menu instead of
+// the full owner nav.
+function actorSubtitleHtml(actor, currentPage) {
+  return actor.isOwner ? ownerSubtitleHtml(actor.name, currentPage) : `Signed in as ${actor.name}`;
 }
 
-function inventoryNavHtml(actor) {
+function actorNavHtml(actor) {
   return actor.isOwner
     ? ownerNavHtml()
     : `<a href="/menu" class="menu-link">Back to Menu</a><a href="/logout" class="menu-link">Sign out</a>`;
@@ -357,39 +359,43 @@ function requireOwnerAuth(req, res, next) {
   next();
 }
 
-// Gates the inventory-upload screens: owners always have access; a bartender
-// only has it if an owner has flagged them as a manager. Checks for an owner
-// session first so existing owner behavior is unchanged, then falls back to
-// a bartender session. Sets req.actor = { name, isOwner } either way so the
-// inventory routes don't need to care which kind of session let them in.
-function requireInventoryAccess(req, res, next) {
-  const cookies = auth.parseCookies(req);
+// Gates an admin screen a manager can be individually granted access to
+// (inventory / bartenders / schedule — see db.MANAGER_PERMISSION_KEYS).
+// Owners always pass; a bartender passes only if granted that specific
+// permission. Checks for an owner session first so existing owner behavior
+// is unchanged, then falls back to a bartender session. Sets req.actor =
+// { name, isOwner } either way so a gated route doesn't need to care which
+// kind of session let it through.
+function requireManagerPermission(permissionKey) {
+  return function (req, res, next) {
+    const cookies = auth.parseCookies(req);
 
-  const ownerToken = cookies[auth.ADMIN_COOKIE];
-  const ownerSession = ownerToken && db.findOwnerSessionByToken(ownerToken);
-  if (ownerSession && Date.now() - ownerSession.createdAt <= auth.SESSION_TTL_MS) {
-    if (ownerSession.ownerId === 'master') {
-      req.actor = { name: 'Master passcode', isOwner: true };
-      return next();
+    const ownerToken = cookies[auth.ADMIN_COOKIE];
+    const ownerSession = ownerToken && db.findOwnerSessionByToken(ownerToken);
+    if (ownerSession && Date.now() - ownerSession.createdAt <= auth.SESSION_TTL_MS) {
+      if (ownerSession.ownerId === 'master') {
+        req.actor = { name: 'Master passcode', isOwner: true };
+        return next();
+      }
+      const owner = db.getOwners().find((o) => o.id === ownerSession.ownerId);
+      if (owner) {
+        req.actor = { name: owner.name, isOwner: true };
+        return next();
+      }
     }
-    const owner = db.getOwners().find((o) => o.id === ownerSession.ownerId);
-    if (owner) {
-      req.actor = { name: owner.name, isOwner: true };
-      return next();
-    }
-  }
 
-  const bartenderToken = cookies[auth.SESSION_COOKIE];
-  const bartenderSession = bartenderToken && db.findSessionByToken(bartenderToken);
-  if (bartenderSession && Date.now() - bartenderSession.createdAt <= auth.SESSION_TTL_MS) {
-    const bartender = db.getBartenders().find((b) => b.id === bartenderSession.bartenderId);
-    if (bartender && bartender.isManager) {
-      req.actor = { name: bartender.name, isOwner: false };
-      return next();
+    const bartenderToken = cookies[auth.SESSION_COOKIE];
+    const bartenderSession = bartenderToken && db.findSessionByToken(bartenderToken);
+    if (bartenderSession && Date.now() - bartenderSession.createdAt <= auth.SESSION_TTL_MS) {
+      const bartender = db.getBartenders().find((b) => b.id === bartenderSession.bartenderId);
+      if (bartender && db.bartenderManagerPermissions(bartender)[permissionKey]) {
+        req.actor = { name: bartender.name, isOwner: false };
+        return next();
+      }
     }
-  }
 
-  return res.redirect('/admin/login');
+    return res.redirect('/admin/login');
+  };
 }
 
 // --- GET /login — bartender enters phone + passcode ---
@@ -499,6 +505,7 @@ app.post('/consent', requireBartenderAuth, (req, res) => {
 
 // --- GET /menu — bartender picks what to do ---
 app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
+  const perms = db.bartenderManagerPermissions(req.bartender);
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -517,7 +524,9 @@ app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         <a href="/specials/new" class="menu-link">Pick Daily Specials</a>
         <a href="/social/new" class="menu-link">Make a Social Post</a>
         <a href="/shifts" class="menu-link">Get Shift Covered</a>
-        ${req.bartender.isManager ? '<a href="/inventory/new" class="menu-link">Upload Inventory</a>' : ''}
+        ${perms.inventory ? '<a href="/inventory/new" class="menu-link">Upload Inventory</a>' : ''}
+        ${perms.bartenders ? '<a href="/admin/bartenders" class="menu-link">Add/Delete Bartenders</a>' : ''}
+        ${perms.schedule ? '<a href="/admin/schedule" class="menu-link">Change Schedule</a>' : ''}
       </div>
     </body>
     </html>
@@ -845,7 +854,7 @@ app.post('/social/new', requireBartenderAuth, requireCurrentConsent, upload.sing
 });
 
 // --- GET /inventory/new — owner uploads a receipt photo ---
-app.get('/inventory/new', requireInventoryAccess, (req, res) => {
+app.get('/inventory/new', requireManagerPermission('inventory'), (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -859,8 +868,8 @@ app.get('/inventory/new', requireInventoryAccess, (req, res) => {
       <div class="card">
         <div id="uploadView">
           <h1>Add inventory from a receipt</h1>
-          <p class="subtitle">${inventorySubtitleHtml(req.actor)}</p>
-          ${inventoryNavHtml(req.actor)}
+          <p class="subtitle">${actorSubtitleHtml(req.actor, 'inventory')}</p>
+          ${actorNavHtml(req.actor)}
           ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
           <form method="POST" action="/inventory/new" enctype="multipart/form-data" id="receiptForm">
             <label for="receipt">Receipt photo</label>
@@ -901,7 +910,7 @@ app.get('/inventory/new', requireInventoryAccess, (req, res) => {
 });
 
 // --- POST /inventory/new — extract line items, show an editable review screen ---
-app.post('/inventory/new', requireInventoryAccess, upload.single('receipt'), async (req, res) => {
+app.post('/inventory/new', requireManagerPermission('inventory'), upload.single('receipt'), async (req, res) => {
   if (!req.file) {
     return res.redirect('/inventory/new?error=' + encodeURIComponent('Please attach a JPEG or PNG photo.'));
   }
@@ -1108,7 +1117,7 @@ app.post('/inventory/new', requireInventoryAccess, upload.single('receipt'), asy
 });
 
 // --- POST /inventory/confirm — write the reviewed quantities to Clover ---
-app.post('/inventory/confirm', requireInventoryAccess, async (req, res) => {
+app.post('/inventory/confirm', requireManagerPermission('inventory'), async (req, res) => {
   // Every row submits all five fields (empty string for whichever mode isn't
   // active), so these stay positionally aligned row-for-row.
   const itemIds = [].concat(req.body.itemId || []);
@@ -1371,26 +1380,49 @@ app.post('/admin/owners/:id/delete', requireOwnerAuth, (req, res) => {
   res.redirect('/admin/owners');
 });
 
-// --- GET /admin/bartenders — list + add bartenders (owner only) ---
-app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
+// Labels for each grantable manager permission, in the order they should
+// appear as checkboxes on the Bartenders admin page and as menu links on a
+// manager's own /menu.
+const MANAGER_PERMISSION_LABELS = {
+  inventory: 'Inventory',
+  bartenders: 'Bartenders',
+  schedule: 'Schedule',
+};
+
+function managerPermissionCheckboxesHtml(permissions) {
+  return db.MANAGER_PERMISSION_KEYS.map(
+    (key) => `
+      <label class="permission-checkbox">
+        <input type="checkbox" name="${key}" value="1" ${permissions[key] ? 'checked' : ''} />
+        ${MANAGER_PERMISSION_LABELS[key]}
+      </label>`
+  ).join('');
+}
+
+// --- GET /admin/bartenders — list + add bartenders (owner, or a manager
+// granted the "bartenders" permission) ---
+app.get('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) => {
   const rows = db.getBartenders()
-    .map(
-      (b) => `
+    .map((b) => {
+      const permissions = db.bartenderManagerPermissions(b);
+      const grantedLabels = db.MANAGER_PERMISSION_KEYS.filter((key) => permissions[key]).map((key) => MANAGER_PERMISSION_LABELS[key]);
+      return `
         <li class="bartender-row">
-          <div>
-            <strong>${b.name}</strong>${b.isManager ? ' <span class="subtitle">(Manager)</span>' : ''}
-            <div class="subtitle">${b.phone}</div>
-          </div>
-          <div class="bartender-row-actions">
-            <form method="POST" action="/admin/bartenders/${b.id}/toggle-manager">
-              <button type="submit" class="secondary-btn">${b.isManager ? 'Remove manager' : 'Make manager'}</button>
-            </form>
+          <div class="bartender-row-top">
+            <div>
+              <strong>${b.name}</strong>${grantedLabels.length ? ` <span class="subtitle">(Manager: ${grantedLabels.join(', ')})</span>` : ''}
+              <div class="subtitle">${b.phone}</div>
+            </div>
             <form method="POST" action="/admin/bartenders/${b.id}/delete">
               <button type="submit" class="danger">Remove</button>
             </form>
           </div>
-        </li>`
-    )
+          <form method="POST" action="/admin/bartenders/${b.id}/permissions" class="permissions-form">
+            ${managerPermissionCheckboxesHtml(permissions)}
+            <button type="submit" class="secondary-btn">Save</button>
+          </form>
+        </li>`;
+    })
     .join('');
 
   res.send(`
@@ -1405,8 +1437,8 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
     <body>
       <div class="card">
         <h1>Bartenders</h1>
-        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'bartenders')}</p>
-        ${ownerNavHtml()}
+        <p class="subtitle">${actorSubtitleHtml(req.actor, 'bartenders')}</p>
+        ${actorNavHtml(req.actor)}
         ${req.query.error ? `<div class="error-banner">${escapeHtml(req.query.error)}</div>` : ''}
         ${req.query.fixed ? `<div class="subtitle" style="color: var(--accent);">Fixed ${escapeHtml(req.query.fixed)} phone number(s) — passcodes untouched.</div>` : ''}
 
@@ -1427,10 +1459,8 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
 
-          <label style="display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 14px;">
-            <input type="checkbox" name="isManager" value="1" style="width: auto;" />
-            Manager (can also upload inventory)
-          </label>
+          <p class="subtitle" style="margin: 14px 0 6px;">Manager permissions (optional)</p>
+          <div class="permissions-form">${managerPermissionCheckboxesHtml({})}</div>
 
           <button type="submit">Add bartender</button>
         </form>
@@ -1443,12 +1473,12 @@ app.get('/admin/bartenders', requireOwnerAuth, (req, res) => {
 // --- POST /admin/bartenders/normalize-phones — fixes a stray leading "+1"
 // on any bartender's stored phone (breaks outbound texts) without touching
 // their passcode or requiring them to be removed and re-added. ---
-app.post('/admin/bartenders/normalize-phones', requireOwnerAuth, (req, res) => {
+app.post('/admin/bartenders/normalize-phones', requireManagerPermission('bartenders'), (req, res) => {
   const fixed = db.normalizeAllBartenderPhones();
   res.redirect('/admin/bartenders?fixed=' + fixed);
 });
 
-app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
+app.post('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) => {
   const { name, phone, passcode } = req.body;
 
   if (!name || !name.trim() || !phone || !phone.trim() || !passcode) {
@@ -1470,7 +1500,11 @@ app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
     phone: normalizedPhone,
     passcodeHash: auth.hashPasscode(passcode),
     createdAt: Date.now(),
-    isManager: !!req.body.isManager,
+    managerPermissions: {
+      inventory: !!req.body.inventory,
+      bartenders: !!req.body.bartenders,
+      schedule: !!req.body.schedule,
+    },
     // Owner reads the current script live when adding them, so no /consent gate needed.
     smsConsentVersion: SMS_CONSENT_VERSION,
     consentAcceptedAt: Date.now(),
@@ -1479,13 +1513,16 @@ app.post('/admin/bartenders', requireOwnerAuth, (req, res) => {
   res.redirect('/admin/bartenders');
 });
 
-app.post('/admin/bartenders/:id/toggle-manager', requireOwnerAuth, (req, res) => {
-  const bartender = db.getBartenders().find((b) => b.id === req.params.id);
-  if (bartender) db.setBartenderManager(bartender.id, !bartender.isManager);
+app.post('/admin/bartenders/:id/permissions', requireManagerPermission('bartenders'), (req, res) => {
+  db.setBartenderManagerPermissions(req.params.id, {
+    inventory: !!req.body.inventory,
+    bartenders: !!req.body.bartenders,
+    schedule: !!req.body.schedule,
+  });
   res.redirect('/admin/bartenders');
 });
 
-app.post('/admin/bartenders/:id/delete', requireOwnerAuth, (req, res) => {
+app.post('/admin/bartenders/:id/delete', requireManagerPermission('bartenders'), (req, res) => {
   db.removeBartender(req.params.id);
   res.redirect('/admin/bartenders');
 });
@@ -1520,7 +1557,7 @@ const DAY_LABELS = {
 };
 
 // --- GET /admin/schedule — owner sets the recurring weekly roster ---
-app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
+app.get('/admin/schedule', requireManagerPermission('schedule'), (req, res) => {
   const schedule = db.getSchedule();
   const bartenders = db.getBartenders();
 
@@ -1552,8 +1589,8 @@ app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
     <body>
       <div class="card">
         <h1>Weekly Schedule</h1>
-        <p class="subtitle">${ownerSubtitleHtml(req.owner.name, 'schedule')}</p>
-        ${ownerNavHtml()}
+        <p class="subtitle">${actorSubtitleHtml(req.actor, 'schedule')}</p>
+        ${actorNavHtml(req.actor)}
         <p class="subtitle">This repeats every week. Bartenders see only their own shifts and can request coverage from here.</p>
         ${req.query.saved ? `<div class="subtitle" style="color: var(--accent);">Schedule saved.</div>` : ''}
 
@@ -1568,7 +1605,7 @@ app.get('/admin/schedule', requireOwnerAuth, (req, res) => {
 });
 
 // --- POST /admin/schedule — save the whole grid at once ---
-app.post('/admin/schedule', requireOwnerAuth, (req, res) => {
+app.post('/admin/schedule', requireManagerPermission('schedule'), (req, res) => {
   for (const day of db.DAYS) {
     for (const shiftType of db.SHIFT_TYPES) {
       const bartenderId = req.body[`${day}-${shiftType}`] || null;

@@ -173,9 +173,6 @@ button:active, .menu-link:active {
 }
 
 .bartender-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   padding: 12px 0;
   border-bottom: 1px solid #33383d;
 }
@@ -184,9 +181,31 @@ button:active, .menu-link:active {
   margin: 0;
 }
 
-.bartender-row-actions {
+.bartender-row-top {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.permissions-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.permission-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.permission-checkbox input {
+  width: auto;
 }
 
 .bartender-row .secondary-btn {
