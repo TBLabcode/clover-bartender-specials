@@ -1385,19 +1385,53 @@ app.post('/admin/owners/:id/delete', requireOwnerAuth, (req, res) => {
 // manager's own /menu.
 const MANAGER_PERMISSION_LABELS = {
   inventory: 'Inventory',
-  bartenders: 'Bartenders',
-  schedule: 'Schedule',
+  bartenders: 'Add/Delete Bartenders',
+  schedule: 'Modify Schedule',
 };
 
-function managerPermissionCheckboxesHtml(permissions) {
+// disabled is set on initial render for a non-manager row/the add-bartender
+// form, so the hidden checkboxes underneath the collapsed "Manager" toggle
+// can't accidentally submit a stale checked value — the toggleManagerPermissionsHtml
+// script below flips `disabled` back off client-side the moment the toggle
+// is checked.
+function managerPermissionCheckboxesHtml(permissions, disabled) {
   return db.MANAGER_PERMISSION_KEYS.map(
     (key) => `
       <label class="permission-checkbox">
-        <input type="checkbox" name="${key}" value="1" ${permissions[key] ? 'checked' : ''} />
+        <input type="checkbox" name="${key}" value="1" ${permissions[key] ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
         ${MANAGER_PERMISSION_LABELS[key]}
       </label>`
   ).join('');
 }
+
+// A single "Manager" checkbox that expands into the three permission
+// checkboxes when checked, collapsing back down when unchecked — rather than
+// always showing all three inline, which the owner found cluttered.
+function managerToggleHtml(isManager, permissions) {
+  return `
+    <label class="permission-checkbox manager-toggle-label">
+      <input type="checkbox" class="manager-toggle" ${isManager ? 'checked' : ''} />
+      Manager
+    </label>
+    <div class="permissions-form manager-permissions" style="${isManager ? '' : 'display:none;'}">
+      ${managerPermissionCheckboxesHtml(permissions, !isManager)}
+    </div>`;
+}
+
+// Wires every "Manager" toggle on the page to show/hide (and enable/disable)
+// its own group of permission checkboxes. Shared by both the bartender list
+// and the "Add a bartender" form since both use managerToggleHtml.
+const MANAGER_TOGGLE_SCRIPT = `
+  <script>
+    document.querySelectorAll('.manager-toggle').forEach((toggle) => {
+      const permsDiv = toggle.closest('form, div').querySelector('.manager-permissions');
+      function sync() {
+        permsDiv.style.display = toggle.checked ? 'flex' : 'none';
+        permsDiv.querySelectorAll('input[type=checkbox]').forEach((cb) => { cb.disabled = !toggle.checked; });
+      }
+      toggle.addEventListener('change', sync);
+    });
+  </script>`;
 
 // --- GET /admin/bartenders — list + add bartenders (owner, or a manager
 // granted the "bartenders" permission) ---
@@ -1417,8 +1451,8 @@ app.get('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) 
               <button type="submit" class="danger">Remove</button>
             </form>
           </div>
-          <form method="POST" action="/admin/bartenders/${b.id}/permissions" class="permissions-form">
-            ${managerPermissionCheckboxesHtml(permissions)}
+          <form method="POST" action="/admin/bartenders/${b.id}/permissions" class="manager-form">
+            ${managerToggleHtml(grantedLabels.length > 0, permissions)}
             <button type="submit" class="secondary-btn">Save</button>
           </form>
         </li>`;
@@ -1459,12 +1493,12 @@ app.get('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) 
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
 
-          <p class="subtitle" style="margin: 14px 0 6px;">Manager permissions (optional)</p>
-          <div class="permissions-form">${managerPermissionCheckboxesHtml({})}</div>
+          ${managerToggleHtml(false, {})}
 
           <button type="submit">Add bartender</button>
         </form>
       </div>
+      ${MANAGER_TOGGLE_SCRIPT}
     </body>
     </html>
   `);
