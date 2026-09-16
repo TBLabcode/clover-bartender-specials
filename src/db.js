@@ -141,6 +141,19 @@ function normalizeAllBartenderPhones() {
   return fixed;
 }
 
+// Managers are bartenders with one extra flag — they keep every normal
+// bartender ability (specials, shift coverage) and additionally get the
+// owner-only inventory-upload screen. No separate account type/table so
+// promoting or demoting someone doesn't touch their passcode or history.
+function setBartenderManager(id, isManager) {
+  const data = readDb();
+  const bartender = data.bartenders.find((b) => b.id === id);
+  if (!bartender) return null;
+  bartender.isManager = !!isManager;
+  writeDb(data);
+  return bartender;
+}
+
 function removeBartender(id) {
   const data = readDb();
   const idx = data.bartenders.findIndex((b) => b.id === id);
@@ -333,6 +346,7 @@ module.exports = {
   findBartenderByPhone,
   setBartenderConsentVersion,
   normalizeAllBartenderPhones,
+  setBartenderManager,
   removeBartender,
   addSession,
   findSessionByToken,

@@ -184,6 +184,18 @@ button:active, .menu-link:active {
   margin: 0;
 }
 
+.bartender-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.bartender-row .secondary-btn {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+
 button.danger {
   width: auto;
   margin-top: 0;
