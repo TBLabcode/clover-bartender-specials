@@ -1411,22 +1411,20 @@ function managerPermissionCheckboxesHtml(permissions, disabled) {
 // look elsewhere). Collapsing hides AND disables the three checkboxes, so
 // hitting Save with the tab collapsed submits no permissions at all — the
 // same "not a manager" result the old plain checkbox gave when unchecked.
-function managerToggleHtml(isManager, permissions) {
-  return `
-    <button type="button" class="manager-tab-btn" data-expanded="${isManager ? 'true' : 'false'}">Manager</button>
-    <div class="permissions-form manager-permissions" style="${isManager ? '' : 'display:none;'}">
-      ${managerPermissionCheckboxesHtml(permissions, !isManager)}
-    </div>`;
+function managerToggleButtonHtml(isManager) {
+  return `<button type="button" class="manager-tab-btn" data-expanded="${isManager ? 'true' : 'false'}">Manager</button>`;
 }
 
-// Wires every "Manager" tab on the page to show/hide (and enable/disable)
-// its own group of permission checkboxes on click. Shared by both the
-// bartender list and the "Add a bartender" form since both use
-// managerToggleHtml.
+// Wires every "Manager" tab on the page to show/hide (and enable/disable) its
+// own group of permission checkboxes on click — the checkboxes live in a
+// sibling element (a separate <form> for a bartender row, sharing an <li>
+// with the Manager/Remove buttons; the same <form> for the "Add a bartender"
+// form), hence searching up to the nearest li or form rather than assuming
+// they're both inside one shared container.
 const MANAGER_TOGGLE_SCRIPT = `
   <script>
     document.querySelectorAll('.manager-tab-btn').forEach((btn) => {
-      const permsDiv = btn.closest('form, div').querySelector('.manager-permissions');
+      const permsDiv = btn.closest('li, form').querySelector('.manager-permissions');
       btn.addEventListener('click', () => {
         const expanded = btn.dataset.expanded !== 'true';
         btn.dataset.expanded = expanded ? 'true' : 'false';
@@ -1443,19 +1441,23 @@ app.get('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) 
     .map((b) => {
       const permissions = db.bartenderManagerPermissions(b);
       const grantedLabels = db.MANAGER_PERMISSION_KEYS.filter((key) => permissions[key]).map((key) => MANAGER_PERMISSION_LABELS[key]);
+      const isManager = grantedLabels.length > 0;
       return `
         <li class="bartender-row">
-          <div class="bartender-row-top">
-            <div>
-              <strong>${b.name}</strong>${grantedLabels.length ? ` <span class="subtitle">(Manager: ${grantedLabels.join(', ')})</span>` : ''}
-              <div class="subtitle">${b.phone}</div>
-            </div>
+          <div>
+            <strong>${b.name}</strong>${isManager ? ` <span class="subtitle">(Manager: ${grantedLabels.join(', ')})</span>` : ''}
+            <div class="subtitle">${b.phone}</div>
+          </div>
+          <div class="manager-row-actions">
+            ${managerToggleButtonHtml(isManager)}
             <form method="POST" action="/admin/bartenders/${b.id}/delete">
               <button type="submit" class="danger">Remove</button>
             </form>
           </div>
           <form method="POST" action="/admin/bartenders/${b.id}/permissions" class="manager-form">
-            ${managerToggleHtml(grantedLabels.length > 0, permissions)}
+            <div class="permissions-form manager-permissions" style="${isManager ? '' : 'display:none;'}">
+              ${managerPermissionCheckboxesHtml(permissions, !isManager)}
+            </div>
             <button type="submit" class="secondary-btn">Save</button>
           </form>
         </li>`;
@@ -1496,7 +1498,10 @@ app.get('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) 
           <label for="passcode">Passcode</label>
           <input type="password" id="passcode" name="passcode" inputmode="numeric" required />
 
-          ${managerToggleHtml(false, {})}
+          ${managerToggleButtonHtml(false)}
+          <div class="permissions-form manager-permissions" style="display:none;">
+            ${managerPermissionCheckboxesHtml({}, true)}
+          </div>
 
           <button type="submit">Add bartender</button>
         </form>

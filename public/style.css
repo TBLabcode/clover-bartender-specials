@@ -181,10 +181,11 @@ button:active, .menu-link:active {
   margin: 0;
 }
 
-.bartender-row-top {
+.manager-row-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .permissions-form {
