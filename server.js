@@ -460,16 +460,14 @@ app.get('/consent', requireBartenderAuth, (req, res) => {
       <div class="card">
         <h1>Before you continue</h1>
         <p class="subtitle">
-          We're adding shift-coverage texts, sent from a second, separate number from your
-          existing specials-approval texts. Please confirm you're okay with that before signing
-          back in.
+          ${POS_ENABLED
+            ? "We're adding shift-coverage texts, sent from a second, separate number from your existing specials-approval texts. Please confirm you're okay with that before signing back in."
+            : "We text staff about shift coverage. Please confirm you're okay with that before signing in."}
         </p>
         <p>
-          "We're adding a second number for shift-coverage texts — separate from the
-          specials-approval number you're already signed up for. You'll get a text if an open
-          shift needs covering, and a confirmation once someone picks it up. Message and data
-          rates may apply. You can reply STOP at any time to stop receiving these texts. Do you
-          agree to receive these texts at this number?"
+          ${POS_ENABLED
+            ? `"We're adding a second number for shift-coverage texts — separate from the specials-approval number you're already signed up for. You'll get a text if an open shift needs covering, and a confirmation once someone picks it up. Message and data rates may apply. You can reply STOP at any time to stop receiving these texts. Do you agree to receive these texts at this number?"`
+            : `"We're adding your phone number to shift-coverage texts. You'll get a text if an open shift needs covering, and a confirmation once someone picks it up. Message and data rates may apply. You can reply STOP at any time to stop receiving these texts. Do you agree to receive these texts at this number?"`}
         </p>
         <p class="subtitle">
           Full details: <a href="/sms-consent.html" target="_blank">SMS Consent Process</a>

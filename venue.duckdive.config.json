@@ -8,5 +8,6 @@
   "category": "Pub",
   "streetAddress": "114 Dock St.",
   "cityStateZip": "Wilmington, NC 28401",
-  "showLogo": false
+  "showLogo": false,
+  "templateSet": "shift-only"
 }

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{businessName}}</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    body { align-items: flex-start; }
+    .card { max-width: 560px; }
+    p, li { color: var(--text); line-height: 1.5; }
+    h2 { font-size: 1.1rem; margin-top: 28px; }
+    hr { border: none; border-top: 1px solid #33383d; margin: 28px 0; }
+    .logo-plate {
+      background: #f2f2f0;
+      border-radius: 16px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      display: inline-block;
+    }
+    .logo-plate img { display: block; max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!--LOGO--><div class="logo-plate">
+      <img src="/logo.png" alt="{{businessName}} logo" width="450" />
+    </div><!--/LOGO-->
+    <h1>{{businessName}}</h1>
+    <p class="subtitle">{{category}} · {{streetAddress}}, {{cityStateZip}}</p>
+
+    <p>{{tagline}}.</p>
+
+    <h2>Contact</h2>
+    <p>{{legalName}}<br />
+    {{streetAddress}}<br />
+    {{cityStateZip}}<br />
+    Phone: <a href="tel:{{phoneNumberTel}}">{{phoneNumber}}</a><br />
+    Email: <a href="mailto:{{contactEmail}}">{{contactEmail}}</a></p>
+
+    <hr />
+
+    <h2>Staff Shift-Coverage SMS</h2>
+    <p class="subtitle">An internal tool for {{businessName}} staff</p>
+
+    <p>This site also runs the bar's internal shift-coverage workflow: an owner keeps the weekly
+    schedule, a bartender who can't work a shift asks for it to be covered, and teammates are
+    texted and can claim it by replying. It is for our own staff only — there is no public
+    sign-up.</p>
+
+    <p>
+      <a href="sms-consent.html">SMS Consent Process</a><br />
+      <a href="terms.html">Terms of Service</a><br />
+      <a href="privacy.html">Privacy Policy</a><br />
+      <a href="/login">Staff Login</a>
+    </p>
+  </div>
+</body>
+</html>

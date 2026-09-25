@@ -15,11 +15,12 @@ const configFile = process.argv[2] || 'venue.config.json';
 const outDirArg = process.argv[3] || 'public';
 
 const config = JSON.parse(fs.readFileSync(path.join(root, configFile), 'utf8'));
-const templatesDir = path.join(root, 'templates');
+// A venue can pick a template subfolder (e.g. "shift-only") via "templateSet" in its config.
+const templatesDir = path.join(root, 'templates', config.templateSet || '');
 const outDir = path.join(root, outDirArg);
 fs.mkdirSync(outDir, { recursive: true });
 
-for (const file of fs.readdirSync(templatesDir)) {
+for (const file of fs.readdirSync(templatesDir).filter((f) => f.endsWith('.html'))) {
   const template = fs.readFileSync(path.join(templatesDir, file), 'utf8');
   const rendered = template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
     if (!(key in config)) throw new Error(`${configFile} is missing "${key}" (used in templates/${file})`);
