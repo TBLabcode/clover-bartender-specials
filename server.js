@@ -13,7 +13,8 @@ const multer = require('multer');
 const twilio = require('twilio');
 const rateLimit = require('express-rate-limit');
 
-const clover = require('./src/clover');
+const clover = require('./src/pos'); // POS_PROVIDER-selected (clover default); name kept to avoid touching every call site
+const POS_ENABLED = clover.enabled !== false;
 const sms = require('./src/sms');
 const db = require('./src/db');
 const scheduler = require('./src/scheduler');
@@ -244,7 +245,7 @@ function dollarsToCents(dollarsStr) {
 // ownerSubtitleHtml below) since it's used rarely enough that it doesn't
 // need a full-width button.
 const OWNER_NAV_LINKS = [
-  { key: 'inventory', href: '/inventory/new', label: 'Inventory' },
+  ...(POS_ENABLED ? [{ key: 'inventory', href: '/inventory/new', label: 'Inventory' }] : []),
   { key: 'bartenders', href: '/admin/bartenders', label: 'Add/Delete Bartenders' },
   { key: 'schedule', href: '/admin/schedule', label: 'Change Bartender Schedule' },
   { key: 'calendar', href: '/admin/calendar', label: "Who's Working When" },
@@ -503,6 +504,12 @@ app.post('/consent', requireBartenderAuth, (req, res) => {
   res.redirect('/menu');
 });
 
+// POS-backed screens are off when POS_PROVIDER=none.
+app.use(['/specials', '/inventory'], (req, res, next) => {
+  if (POS_ENABLED) return next();
+  res.status(404).send('Not available — this venue has no POS connected yet.');
+});
+
 // --- GET /menu — bartender picks what to do ---
 app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
   const perms = db.bartenderManagerPermissions(req.bartender);
@@ -521,10 +528,10 @@ app.get('/menu', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         <p class="subtitle">
           Signed in as ${req.bartender.name} · <a href="/logout">not you?</a>
         </p>
-        <a href="/specials/new" class="menu-link">Pick Daily Specials</a>
+        ${POS_ENABLED ? '<a href="/specials/new" class="menu-link">Pick Daily Specials</a>' : ''}
         <a href="/social/new" class="menu-link">Make a Social Post</a>
         <a href="/shifts" class="menu-link">Get Shift Covered</a>
-        ${perms.inventory ? '<a href="/inventory/new" class="menu-link">Upload Inventory</a>' : ''}
+        ${POS_ENABLED && perms.inventory ? '<a href="/inventory/new" class="menu-link">Upload Inventory</a>' : ''}
         ${perms.bartenders ? '<a href="/admin/bartenders" class="menu-link">Add/Delete Bartenders</a>' : ''}
         ${perms.schedule ? '<a href="/admin/schedule" class="menu-link">Change Schedule</a>' : ''}
       </div>
@@ -1244,7 +1251,7 @@ app.post('/admin/login', loginLimiter, (req, res) => {
   const token = auth.newToken();
   db.addOwnerSession({ token, ownerId: owner.id, createdAt: Date.now() });
   auth.setCookie(res, auth.ADMIN_COOKIE, token, auth.SESSION_TTL_MS);
-  res.redirect('/inventory/new?login=1');
+  res.redirect(POS_ENABLED ? '/inventory/new?login=1' : '/admin/bartenders?login=1');
 });
 
 // --- Master passcode — bootstraps the first owner account, and works as a
@@ -1395,7 +1402,7 @@ const MANAGER_PERMISSION_LABELS = {
 // script below flips `disabled` back off client-side the moment the toggle
 // is checked.
 function managerPermissionCheckboxesHtml(permissions, disabled) {
-  return db.MANAGER_PERMISSION_KEYS.map(
+  return db.MANAGER_PERMISSION_KEYS.filter((key) => POS_ENABLED || key !== 'inventory').map(
     (key) => `
       <label class="permission-checkbox">
         <input type="checkbox" name="${key}" value="1" ${permissions[key] ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
@@ -1440,7 +1447,7 @@ app.get('/admin/bartenders', requireManagerPermission('bartenders'), (req, res) 
   const rows = db.getBartenders()
     .map((b) => {
       const permissions = db.bartenderManagerPermissions(b);
-      const grantedLabels = db.MANAGER_PERMISSION_KEYS.filter((key) => permissions[key]).map((key) => MANAGER_PERMISSION_LABELS[key]);
+      const grantedLabels = db.MANAGER_PERMISSION_KEYS.filter((key) => permissions[key] && (POS_ENABLED || key !== 'inventory')).map((key) => MANAGER_PERMISSION_LABELS[key]);
       const isManager = grantedLabels.length > 0;
       return `
         <li class="bartender-row">
@@ -2164,8 +2171,16 @@ app.post('/sms/shift-incoming', verifyTwilioRequest, async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  if (!POS_ENABLED) {
+    console.log('POS_PROVIDER=none: specials, inventory and price/report jobs are disabled.');
+  }
   if (process.env.CLOVER_DRY_RUN === 'true') {
     console.log('CLOVER_DRY_RUN: Clover calls are mocked/logged, not sent for real.');
+  }
+  if (process.env.TOAST_DRY_RUN === 'true') {
+    // src/toast.js isn't wired into any routes yet — scaffolding only,
+    // pending Toast's response to the custom integration application.
+    console.log('TOAST_DRY_RUN: Toast calls are mocked/logged, not sent for real.');
   }
   if (process.env.TWILIO_DRY_RUN === 'true') {
     console.log('TWILIO_DRY_RUN: Twilio texts are logged, not sent for real.');

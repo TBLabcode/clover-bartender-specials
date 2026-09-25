@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const clover = require('./clover');
+const pos = require('./pos');
 const sms = require('./sms');
 const db = require('./db');
 
@@ -33,7 +33,7 @@ async function revertExpiredSpecials() {
   const failures = [];
   for (const special of active) {
     try {
-      await clover.updateItemPrice(special.itemId, special.originalPrice);
+      await pos.updateItemPrice(special.itemId, special.originalPrice);
       results.push(`${special.itemName} back to ${formatMoney(special.originalPrice)}`);
     } catch (err) {
       results.push(`FAILED to revert ${special.itemName}: ${err.message}`);
@@ -49,7 +49,7 @@ async function revertExpiredSpecials() {
 
   if (failures.length > 0) {
     await sms.notifyOwners(
-      `⚠️ ${failures.length} special${failures.length > 1 ? 's' : ''} failed to revert automatically — check Clover manually:\n${failures.join('\n')}`
+      `⚠️ ${failures.length} special${failures.length > 1 ? 's' : ''} failed to revert automatically — check ${pos.providerName} manually:\n${failures.join('\n')}`
     );
   }
 }
@@ -82,7 +82,7 @@ async function expireStalePendingRequests() {
 // --- Daily report job: yesterday's sales + discounts, texted out ---
 async function sendDailyReport() {
   const [startMs, endMs] = getYesterdayRange();
-  const orders = await clover.getOrdersBetween(startMs, endMs);
+  const orders = await pos.getOrdersBetween(startMs, endMs);
 
   let totalSales = 0;
   let totalDiscounts = 0;
@@ -110,6 +110,10 @@ async function sendDailyReport() {
 }
 
 function start() {
+  if (pos.enabled === false) {
+    console.log('Scheduler not started: POS_PROVIDER=none (no price reverts or sales reports).');
+    return;
+  }
   const tz = process.env.APP_TIMEZONE || 'America/New_York';
 
   // 8:00 AM every day — revert specials, and auto-deny anything left
