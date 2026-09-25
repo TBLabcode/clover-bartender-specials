@@ -8,11 +8,21 @@ const path = require('path');
 const DB_PATH = path.join(__dirname, '..', 'data', 'db.json');
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-const SHIFT_TYPES = ['day', 'night', 'allDay'];
+// Which shift slots this venue's schedule has. Defaults to Day / Night / All
+// day (Last Resort); a venue can set SHIFT_TYPES (comma-separated) to use e.g.
+// "day,night,lateNight" instead.
+const KNOWN_SHIFT_TYPES = ['day', 'night', 'allDay', 'lateNight'];
+const SHIFT_TYPES = (process.env.SHIFT_TYPES || 'day,night,allDay')
+  .split(',')
+  .map((t) => t.trim())
+  .filter((t) => KNOWN_SHIFT_TYPES.includes(t));
 
 function emptySchedule() {
   const schedule = {};
-  for (const day of DAYS) schedule[day] = { day: null, night: null, allDay: null };
+  for (const day of DAYS) {
+    schedule[day] = {};
+    for (const shiftType of SHIFT_TYPES) schedule[day][shiftType] = null;
+  }
   return schedule;
 }
 
@@ -35,6 +45,7 @@ function readDb() {
       schedule: emptySchedule(),
       coverageRequests: [],
       scheduleOverrides: {},
+      scheduleAlt: {},
       nextCoverageRequestNumber: 0,
       drinksPerUnitOverrides: {},
     };
@@ -48,6 +59,7 @@ function readDb() {
   if (!data.schedule) data.schedule = emptySchedule();
   if (!data.coverageRequests) data.coverageRequests = [];
   if (!data.scheduleOverrides) data.scheduleOverrides = {};
+  if (!data.scheduleAlt) data.scheduleAlt = {};
   if (!data.nextCoverageRequestNumber) data.nextCoverageRequestNumber = 0;
   if (!data.drinksPerUnitOverrides) data.drinksPerUnitOverrides = {};
   return data;
@@ -263,16 +275,20 @@ function setScheduleSlot(day, shiftType, bartenderId) {
   return data.schedule;
 }
 
-// Every day/shift-type slot this bartender is currently assigned to.
-function getBartenderShifts(bartenderId) {
-  const schedule = getSchedule();
-  const shifts = [];
-  for (const day of DAYS) {
-    for (const shiftType of SHIFT_TYPES) {
-      if (schedule[day][shiftType] === bartenderId) shifts.push({ day, shiftType });
-    }
-  }
-  return shifts;
+// "Week B" people for shifts that alternate every other week (see
+// ROTATION_ANCHOR in server.js). Absent = same person as the regular
+// schedule; the string "none" = nobody works that shift in Week B.
+function getScheduleAlt() {
+  return readDb().scheduleAlt;
+}
+
+function setScheduleAltSlot(day, shiftType, value) {
+  const data = readDb();
+  if (!data.scheduleAlt[day]) data.scheduleAlt[day] = {};
+  if (value) data.scheduleAlt[day][shiftType] = value;
+  else delete data.scheduleAlt[day][shiftType];
+  writeDb(data);
+  return data.scheduleAlt;
 }
 
 // --- Shift-coverage requests: a bartender giving away one of their own
@@ -388,7 +404,8 @@ module.exports = {
   removeOwnerSession,
   getSchedule,
   setScheduleSlot,
-  getBartenderShifts,
+  getScheduleAlt,
+  setScheduleAltSlot,
   nextCoverageRequestNumber,
   addCoverageRequest,
   getCoverageRequests,

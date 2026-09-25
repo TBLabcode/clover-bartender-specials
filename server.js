@@ -1574,7 +1574,11 @@ app.post('/admin/bartenders/:id/delete', requireManagerPermission('bartenders'),
   res.redirect('/admin/bartenders');
 });
 
-const SHIFT_LABELS = { day: 'Day', night: 'Night', allDay: 'All day', both: 'Day + Night' };
+// A venue can add times to the labels with SHIFT_LABEL_OVERRIDES, a JSON
+// object, e.g. {"day":"Day 1-7pm","night":"Night 7pm-2am"}.
+let shiftLabelOverrides = {};
+try { shiftLabelOverrides = JSON.parse(process.env.SHIFT_LABEL_OVERRIDES || '{}'); } catch (err) { /* ignore bad JSON */ }
+const SHIFT_LABELS = { day: 'Day', night: 'Night', allDay: 'All day', lateNight: 'Late night', both: 'Day + Night', ...shiftLabelOverrides };
 
 // A coverage request's shiftType is normally a real schedule slot type
 // ('day'/'night'/'allDay'), but 'both' is a request-only value meaning "the
@@ -1603,6 +1607,34 @@ const DAY_LABELS = {
   friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
 };
 
+// Optional every-other-week rotation. ROTATION_ANCHOR is the Monday (yyyy-mm-dd)
+// of a "Week A"; the following week is "Week B", and so on. Unset = every
+// shift repeats weekly, exactly as before.
+const ROTATION_ANCHOR = /^\d{4}-\d{2}-\d{2}$/.test(process.env.ROTATION_ANCHOR || '') ? process.env.ROTATION_ANCHOR : null;
+
+function mondayOf(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - ((date.getDay() + 6) % 7));
+}
+function isWeekB(date) {
+  if (!ROTATION_ANCHOR) return false;
+  const weeks = Math.round((mondayOf(date) - mondayOf(parseDateKey(ROTATION_ANCHOR))) / (7 * 24 * 3600 * 1000));
+  return Math.abs(weeks) % 2 === 1;
+}
+
+function loadRoster() {
+  return { schedule: db.getSchedule(), alt: db.getScheduleAlt() };
+}
+
+// Who the recurring roster has on a slot on a specific date, before any
+// one-off coverage swap is layered on top.
+function regularBartenderId(roster, day, shiftType, date) {
+  const weekA = (roster.schedule[day] || {})[shiftType] || null;
+  if (!isWeekB(date)) return weekA;
+  const weekB = (roster.alt[day] || {})[shiftType];
+  if (!weekB) return weekA;
+  return weekB === 'none' ? null : weekB;
+}
+
 // --- GET /admin/schedule — owner sets the recurring weekly roster ---
 app.get('/admin/schedule', requireManagerPermission('schedule'), (req, res) => {
   const schedule = db.getSchedule();
@@ -1612,14 +1644,25 @@ app.get('/admin/schedule', requireManagerPermission('schedule'), (req, res) => {
     `<option value="">— unassigned —</option>` +
     bartenders.map((b) => `<option value="${b.id}"${b.id === selectedId ? ' selected' : ''}>${b.name}</option>`).join('');
 
+  const alt = db.getScheduleAlt();
+  const altOptionsHtml = (selectedId) =>
+    `<option value=""${!selectedId ? ' selected' : ''}>Same as Week A</option>` +
+    `<option value="none"${selectedId === 'none' ? ' selected' : ''}>— nobody works this week —</option>` +
+    bartenders.map((b) => `<option value="${b.id}"${b.id === selectedId ? ' selected' : ''}>${b.name}</option>`).join('');
+
   const rowsHtml = db.DAYS.map((day) => `
     <div class="schedule-day">
       <h2>${DAY_LABELS[day]}</h2>
       ${db.SHIFT_TYPES.map((shiftType) => `
-        <label for="${day}-${shiftType}">${SHIFT_LABELS[shiftType]}</label>
+        <label for="${day}-${shiftType}">${SHIFT_LABELS[shiftType]}${ROTATION_ANCHOR ? ' — Week A' : ''}</label>
         <select id="${day}-${shiftType}" name="${day}-${shiftType}">
           ${optionsHtml(schedule[day][shiftType])}
         </select>
+        ${ROTATION_ANCHOR ? `
+        <label for="${day}-${shiftType}-b">${SHIFT_LABELS[shiftType]} — Week B</label>
+        <select id="${day}-${shiftType}-b" name="${day}-${shiftType}-b">
+          ${altOptionsHtml((alt[day] || {})[shiftType])}
+        </select>` : ''}
       `).join('')}
     </div>
   `).join('');
@@ -1639,6 +1682,7 @@ app.get('/admin/schedule', requireManagerPermission('schedule'), (req, res) => {
         <p class="subtitle">${actorSubtitleHtml(req.actor, 'schedule')}</p>
         ${actorNavHtml(req.actor)}
         <p class="subtitle">This repeats every week. Bartenders see only their own shifts and can request coverage from here.</p>
+        ${ROTATION_ANCHOR ? `<p class="subtitle">Week A is the week starting ${formatDateLong(parseDateKey(ROTATION_ANCHOR))}; Week B is the week after, and they alternate. Only set a Week B person for a shift that changes every other week.</p>` : ''}
         ${req.query.saved ? `<div class="subtitle" style="color: var(--accent);">Schedule saved.</div>` : ''}
 
         <form method="POST" action="/admin/schedule">
@@ -1657,6 +1701,7 @@ app.post('/admin/schedule', requireManagerPermission('schedule'), (req, res) => 
     for (const shiftType of db.SHIFT_TYPES) {
       const bartenderId = req.body[`${day}-${shiftType}`] || null;
       db.setScheduleSlot(day, shiftType, bartenderId);
+      if (ROTATION_ANCHOR) db.setScheduleAltSlot(day, shiftType, req.body[`${day}-${shiftType}-b`] || '');
     }
   }
   res.redirect('/admin/schedule?saved=1');
@@ -1762,7 +1807,7 @@ function parseDateKey(key) {
 // Shown chronologically (not grouped by weekday name) since a bartender
 // looking several weeks or months out wants an actual calendar order.
 function calendarBodyHtml(weeks) {
-  const schedule = db.getSchedule();
+  const roster = loadRoster();
   const overrides = db.getScheduleOverrides();
   const nameById = new Map(db.getBartenders().map((b) => [b.id, b.name]));
 
@@ -1778,9 +1823,12 @@ function calendarBodyHtml(weeks) {
     // branch) without touching the recurring weekly schedule below it.
     const dateOverrides = overrides[dateKeyOf(date)] || {};
     const rows = db.SHIFT_TYPES.map((shiftType) => {
-      const regularId = schedule[day][shiftType];
+      const regularId = regularBartenderId(roster, day, shiftType, date);
       const regularName = regularId ? (nameById.get(regularId) || 'Unknown') : null;
       const overrideId = dateOverrides[shiftType];
+      // Late night only exists on the busy nights — don't list it as
+      // "unassigned" on the days nobody works it.
+      if (shiftType === 'lateNight' && !regularId && !overrideId) return '';
       if (overrideId) {
         const overrideName = nameById.get(overrideId) || 'Unknown';
         const coveringNote = regularName && regularName !== overrideName ? ` (covering for ${regularName})` : '';
@@ -1860,7 +1908,7 @@ app.get('/admin/calendar', requireOwnerAuth, (req, res) => {
 
 // --- GET /shifts — bartender's own upcoming shifts, with a way to give one away ---
 app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
-  const myShifts = db.getBartenderShifts(req.bartender.id);
+  const roster = loadRoster();
   const myOpenRequests = db.getCoverageRequests().filter((r) => r.bartenderId === req.bartender.id && r.status !== 'denied');
 
   const pendingHtml = myOpenRequests.length
@@ -1874,17 +1922,27 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
       </div>`
     : '';
 
-  // Group by day so a bartender working both Day and Night the same day can
-  // give up either one, or both together as a single "Day + Night" request.
-  const byDay = {};
-  for (const { day, shiftType } of myShifts) {
-    if (!byDay[day]) byDay[day] = [];
-    byDay[day].push(shiftType);
+  // One card per weekday and set of shifts held. A bartender working both Day
+  // and Night the same day can give up either one, or both together as a
+  // single "Day + Night" request. With an every-other-week rotation the same
+  // weekday can hold different shifts on different weeks, so dates are
+  // grouped by what the bartender actually holds on each date.
+  const cards = [];
+  for (const day of db.DAYS) {
+    const groups = new Map();
+    for (const date of occurrencesOf(day, SHIFT_LOOKAHEAD_WEEKS)) {
+      const held = db.SHIFT_TYPES.filter((t) => regularBartenderId(roster, day, t, date) === req.bartender.id);
+      if (!held.length) continue;
+      const key = held.join(',');
+      if (!groups.has(key)) groups.set(key, { shiftTypes: held, dates: [] });
+      groups.get(key).dates.push(date);
+    }
+    let n = 0;
+    for (const g of groups.values()) cards.push({ day, ...g, n: n++ });
   }
 
-  const rowsHtml = Object.keys(byDay).length
-    ? db.DAYS.filter((day) => byDay[day]).map((day) => {
-        const shiftTypes = byDay[day];
+  const rowsHtml = cards.length
+    ? cards.map(({ day, shiftTypes, dates, n }) => {
         const hasAllDay = shiftTypes.includes('allDay');
         const hasBoth = shiftTypes.includes('day') && shiftTypes.includes('night');
         // A lone 'allDay' shift can be given up as just its day half, just
@@ -1896,20 +1954,23 @@ app.get('/shifts', requireBartenderAuth, requireCurrentConsent, (req, res) => {
         const buttons = [];
         if (offerDay) buttons.push(`<button type="submit" name="shiftType" value="day" class="danger">Give up Day</button>`);
         if (offerNight) buttons.push(`<button type="submit" name="shiftType" value="night" class="danger">Give up Night</button>`);
+        if (shiftTypes.includes('lateNight')) buttons.push(`<button type="submit" name="shiftType" value="lateNight" class="danger">Give up ${SHIFT_LABELS.lateNight}</button>`);
         if (hasBoth) buttons.push(`<button type="submit" name="shiftType" value="both" class="danger">Give up Day + Night</button>`);
         if (hasAllDay) buttons.push(`<button type="submit" name="shiftType" value="allDay" class="danger">Give up All day</button>`);
 
-        const dateOptionsHtml = occurrencesOf(day, SHIFT_LOOKAHEAD_WEEKS)
+        const dateOptionsHtml = dates
           .map((d) => `<option value="${dateKeyOf(d)}">${formatDateLong(d)}</option>`)
           .join('');
+        const everyWeek = dates.length >= SHIFT_LOOKAHEAD_WEEKS;
+        const selectId = n === 0 ? `date-${day}` : `date-${day}-${n + 1}`;
 
         return `
           <div class="bartender-row" style="flex-direction: column; align-items: stretch; gap: 10px;">
-            <strong>${DAY_LABELS[day]} · ${shiftTypes.map((st) => SHIFT_LABELS[st]).join(' + ')}</strong>
+            <strong>${DAY_LABELS[day]} · ${shiftTypes.map((st) => SHIFT_LABELS[st]).join(' + ')}${everyWeek ? '' : ' (every other week)'}</strong>
             <form method="POST" action="/shifts/cover">
               <input type="hidden" name="day" value="${day}" />
-              <label for="date-${day}">Which date?</label>
-              <select id="date-${day}" name="date">${dateOptionsHtml}</select>
+              <label for="${selectId}">Which date?</label>
+              <select id="${selectId}" name="date">${dateOptionsHtml}</select>
               <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">
                 ${buttons.join('')}
               </div>
@@ -1959,9 +2020,9 @@ app.post('/shifts/cover', requireBartenderAuth, requireCurrentConsent, async (re
     return res.redirect('/shifts?error=' + encodeURIComponent('Pick a valid upcoming date.'));
   }
 
-  const myShiftTypesThatDay = db.getBartenderShifts(req.bartender.id)
-    .filter((s) => s.day === day)
-    .map((s) => s.shiftType);
+  const roster = loadRoster();
+  const dateObj = parseDateKey(date);
+  const myShiftTypesThatDay = db.SHIFT_TYPES.filter((t) => regularBartenderId(roster, day, t, dateObj) === req.bartender.id);
   const requestedSlots = slotsCoveredBy(shiftType);
   const myCoveredSlots = coveredSlots(myShiftTypesThatDay);
   const mine = requestedSlots.every((slot) => myCoveredSlots.has(slot));
